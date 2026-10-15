@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lash</title>
 <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
+<script type="importmap">
+{"imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
 <style>
   html, body { margin:0; height:100%; background:#101418; color:#e8eef2;
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -31,7 +37,7 @@
 </head>
 <body>
 <div id="wrap">
-  <div id="face"><canvas id="puppetCanvas" width="900" height="900" style="display:none"></canvas><video id="faceVideo" src="lash-face.mp4" poster="lash-face.jpg" autoplay muted loop playsinline></video><video id="faceTalk" src="lash-talk.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceWork" src="lash-work.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceMake" src="lash-make.mp4" muted loop playsinline preload="auto" style="display:none"></video></div>
+  <div id="face"><div id="world3d" style="display:none;width:100%;height:100%"></div><canvas id="puppetCanvas" width="900" height="900" style="display:none"></canvas><video id="faceVideo" src="lash-face.mp4" poster="lash-face.jpg" autoplay muted loop playsinline></video><video id="faceTalk" src="lash-talk.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceWork" src="lash-work.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceMake" src="lash-make.mp4" muted loop playsinline preload="auto" style="display:none"></video></div>
   <div id="name">Lash</div>
   <div id="status">connecting…</div>
   <div id="caption"></div>
@@ -59,13 +65,19 @@ const PUP = {
   blinkAt: 2600, blinkT0: -1, bounceT0: -1, lastTs: 0,
 };
 
+// 3D world state (stage v7) — a WebGL room + rigged dog rendered inside
+// the medallion by the module script at the bottom of this page. WORLD.on
+// flips true only after the scene AND model are fully ready; every
+// failure before that leaves v6/v5 exactly as they were.
+const WORLD = { on: false };
+
 function setStatus(s) { statusEl.textContent = s; }
 
 // Face media fallback: if the video can't load (e.g. local relay serving),
 // fall back to the emoji so the stage never shows a broken medallion.
 try {
   const fv = document.getElementById('faceVideo');
-  fv.addEventListener('error', () => { if (!PUP.on) face.textContent = '🐶'; }, true);
+  fv.addEventListener('error', () => { if (!PUP.on && !WORLD.on) face.textContent = '🐶'; }, true);
   const p = fv.play && fv.play();
   if (p && p.catch) p.catch(() => {});
 } catch (e) { /* the poster/emoji world still works */ }
@@ -215,6 +227,7 @@ function faceShow(name) {
   try {
     if (!FACE_VIDS[name]) name = 'idle';
     faceState = name;
+    if (WORLD.on) { worldSetState(name); return; }
     if (PUP.on) { puppetSetState(name); return; }
     for (const [k, id] of Object.entries(FACE_VIDS)) {
       const el = document.getElementById(id);
@@ -317,6 +330,9 @@ function puppetEnable() {
   PUP.ctx = cv.getContext('2d');
   if (!PUP.ctx) return;
   PUP.on = true;
+  // The 3D world owns the medallion: stay loaded (PUP.speech still feeds
+  // both engines' jaw drivers) but take nothing over visually.
+  if (WORLD.on) return;
   for (const id of Object.values(FACE_VIDS)) {
     const el = document.getElementById(id);
     if (el) { el.style.display = 'none'; try { el.pause(); } catch (e) {} }
@@ -352,6 +368,7 @@ function pupProfile(y) {
 function puppetFrame(ts) {
   if (!PUP.on) return;
   requestAnimationFrame(puppetFrame);
+  if (WORLD.on) return;   // 3D world is drawing; save the cycles
   try {
     const ctx = PUP.ctx, t = ts / 1000;
     // amplitude from the active line's envelope
@@ -644,6 +661,354 @@ if (ghMode && !liveMode) {
     } catch (e) { /* poll again next tick */ }
   }, 1000);
 }
+</script>
+<script type="module">
+// ---- 3D world (stage v7) ----
+// Howard's VRML insight in modern form: the meeting sees this page, so
+// the 3D world lives IN the page — a Three.js room with a rigged dog,
+// rendered by the bot's browser. The wire still carries only the control
+// signals the system already produces: faceShow states, and the per-line
+// speech envelope the bridge ships (read from PUP.speech, exactly like
+// the v6 puppet). Model: "Shiba Inu" by Quaternius (CC0 1.0, via Poly
+// Pizza) — a stand-in body; Lash's own rig is a later asset.
+//
+// The asset has NO jaw bone and a single mesh, so per the spike rule the
+// jaw is amplitude-driven head/muzzle motion: envelope -> head dip +
+// neck dip + a small head drop, which reads as jaw movement at tile
+// size. Ears (Ear1.L/R), head tilt, tail wag and the baked clips
+// (Idle / Idle_2 / Idle_2_HeadLow / Jump_ToIdle) carry the rest.
+//
+// FALLBACK IS SACRED: no WebGL, CDN failure, model failure, or repeated
+// runtime errors all leave WORLD.on false (or flip it back off) and the
+// v6 puppet / v5 medallion run the call untouched. This layer can never
+// produce a black or broken tile.
+const WDIAG = { webgl: false, stage: 'boot', err: null, gl: null, bones: [], clips: [] };
+window.__lashWorldDiag = WDIAG;
+const DOG_URL = window.__LASH_DOG_URL || 'dog.glb';
+const WTUNE = { pitchSign: -1, tiltSign: 1, jawDip: 0.17, jawDrop: 0.012,
+                neckDip: 0.09, tiltRad: 0.17, lookDown: 0.22,
+                earSplay: 0.22, earBack: 0.12 };
+window.__lashWorldTune = WTUNE;
+window.worldSetState = () => {};   // real one replaces this during init
+const wTimeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('load timeout')), ms));
+function worldFail(stage, err) {
+  WDIAG.stage = stage;
+  WDIAG.err = String((err && err.message) || err || stage);
+}
+
+(async () => {
+  let THREE, GLTFLoader;
+  try {
+    const probe = document.createElement('canvas');
+    const gl = probe.getContext('webgl2') || probe.getContext('webgl') ||
+               probe.getContext('experimental-webgl');
+    if (!gl) { worldFail('webgl', 'no WebGL context in this browser'); return; }
+    WDIAG.webgl = true;
+    try {
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      WDIAG.gl = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL))
+                     : String(gl.getParameter(gl.RENDERER));
+    } catch (e) { WDIAG.gl = 'unknown'; }
+    WDIAG.stage = 'imports';
+    THREE = await import('three');
+    ({ GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js'));
+  } catch (e) { worldFail('imports', e); return; }
+
+  const B = {};            // bones by name
+  const ACT = {};          // animation actions by role
+  const W = { jaw: 0, perk: 0, perkVel: 0, tilt: 0, tiltVel: 0,
+              look: 0, lookVel: 0, prevSpeech: null, wagPhase: 0,
+              flickAt: 2600 + Math.random() * 2600, flickT0: -1, flickEar: 'L',
+              jumpUntil: 0, idle2Until: 0, nextIdle2: 9000 + Math.random() * 5000,
+              errStreak: 0, applied: [] };
+  let renderer = null, scene = null, camera = null, mixer = null, curAction = null;
+  let cur = 'idle';
+
+  function worldDisable() {
+    if (!WORLD.on) return;
+    WORLD.on = false;
+    WDIAG.stage = 'disabled-runtime';
+    const holder = document.getElementById('world3d');
+    if (holder) holder.style.display = 'none';
+    if (renderer) { try { renderer.setAnimationLoop(null); } catch (e) {} }
+    const pc = document.getElementById('puppetCanvas');
+    if (PUP.on && pc) pc.style.display = 'block';
+    else if (!PUP.on) { try { faceShow(faceState); } catch (e) {} }
+  }
+  function worldEnable() {
+    let holder = document.getElementById('world3d');
+    if (!holder) {
+      // The emoji fallback may have wiped #face before we were ready;
+      // rebuild the holder rather than giving up (same trick as v6).
+      face.textContent = '';
+      holder = document.createElement('div');
+      holder.id = 'world3d';
+      holder.style.cssText = 'width:100%;height:100%';
+      face.appendChild(holder);
+    }
+    if (renderer && renderer.domElement.parentNode !== holder)
+      holder.appendChild(renderer.domElement);
+    const pc = document.getElementById('puppetCanvas');
+    if (pc) pc.style.display = 'none';
+    for (const id of Object.values(FACE_VIDS)) {
+      const el = document.getElementById(id);
+      if (el) { el.style.display = 'none'; try { el.pause(); } catch (e) {} }
+    }
+    holder.style.display = 'block';
+    WORLD.on = true;
+    WDIAG.stage = 'live';
+    if (window.worldSetState) window.worldSetState(faceState);
+  }
+
+  try {
+    WDIAG.stage = 'scene';
+    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'low-power' });
+    // updateStyle=false: the stage CSS (#face canvas) sizes the canvas to
+    // the medallion; an inline 440px style would overflow the circle and
+    // show only one quadrant of the scene.
+    renderer.setSize(440, 440, false);
+    renderer.setPixelRatio(1);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x2b2019);
+    scene.fog = new THREE.Fog(0x2b2019, 7, 16);
+    camera = new THREE.PerspectiveCamera(34, 1, 0.1, 60);
+    scene.add(new THREE.HemisphereLight(0xffe2b8, 0x3d2c1e, 1.15));
+    const key = new THREE.DirectionalLight(0xffdfae, 2.4);
+    key.position.set(2.2, 3.6, 2.4);
+    key.castShadow = true;
+    key.shadow.mapSize.set(512, 512);
+    key.shadow.camera.left = -2; key.shadow.camera.right = 2;
+    key.shadow.camera.top = 3; key.shadow.camera.bottom = -1;
+    key.shadow.bias = -0.0004;
+    scene.add(key);
+    const rim = new THREE.DirectionalLight(0x9db8ff, 0.55);
+    rim.position.set(-2.5, 1.8, -2.0);
+    scene.add(rim);
+    const floor = new THREE.Mesh(
+      new THREE.CircleGeometry(9, 40),
+      new THREE.MeshStandardMaterial({ color: 0x74522f, roughness: 0.95 }));
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+    const rug = new THREE.Mesh(
+      new THREE.CircleGeometry(1.02, 40),
+      new THREE.MeshStandardMaterial({ color: 0x8a4433, roughness: 1 }));
+    rug.rotation.x = -Math.PI / 2;
+    rug.position.y = 0.002;
+    rug.receiveShadow = true;
+    scene.add(rug);
+
+    WDIAG.stage = 'model';
+    const loader = new GLTFLoader();
+    const gltf = await Promise.race([loader.loadAsync(DOG_URL), wTimeout(25000)]);
+    const model = gltf.scene;
+    scene.add(model);
+    scene.updateMatrixWorld(true);
+    // Normalize from the SKELETON, not the mesh bounds: Box3.setFromObject
+    // ignores skinning and reads raw geometry (this export's armature
+    // carries a x100 scale, so mesh bounds are meaningless). Bone world
+    // positions are the truth: height -> 1.0, feet on floor, centered.
+    const bonePts = [];
+    model.traverse((o) => {
+      if (o.isBone && !/^(PoleTarget|IK)/.test(o.name)) {
+        const v = new THREE.Vector3();
+        o.getWorldPosition(v);
+        bonePts.push(v);
+      }
+    });
+    let minY = Infinity, maxY = -Infinity, minX = Infinity, maxX = -Infinity,
+        minZ = Infinity, maxZ = -Infinity;
+    for (const p of bonePts) {
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+    }
+    const rawH = maxY - minY;
+    const s = rawH > 0 ? 1.0 / rawH : 1;
+    model.scale.setScalar(s);
+    model.position.set(-((minX + maxX) / 2) * s, -minY * s, -((minZ + maxZ) / 2) * s);
+    scene.updateMatrixWorld(true);
+    model.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+
+    // GLTFLoader strips dots from node names ('Ear1.L' loads as 'Ear1L').
+    const bone = (name) => model.getObjectByName(name) ||
+                            model.getObjectByName(name.replace(/\./g, '')) || null;
+    for (const n of ['Head', 'Neck3', 'Neck1', 'Ear1.L', 'Ear1.R', 'Tail1', 'Tail2', 'Torso'])
+      B[n] = bone(n);
+    WDIAG.bones = Object.keys(B).filter((k) => B[k]);
+    if (!B.Head) { worldFail('rig', 'no Head bone in model'); return; }
+
+    mixer = new THREE.AnimationMixer(model);
+    const findClip = (name) => THREE.AnimationClip.findByName(gltf.animations, name);
+    const mk = (name, loop) => {
+      const c = findClip(name);
+      if (!c) return null;
+      const a = mixer.clipAction(c);
+      a.loop = loop ? THREE.LoopRepeat : THREE.LoopOnce;
+      a.clampWhenFinished = !loop;
+      return a;
+    };
+    ACT.idle = mk('Idle', true);
+    ACT.idle2 = mk('Idle_2', true);
+    ACT.headlow = mk('Idle_2_HeadLow', true);
+    ACT.jump = mk('Jump_ToIdle', false);
+    WDIAG.clips = gltf.animations.map((a) => a.name);
+    if (!ACT.idle) { worldFail('rig', 'no Idle clip in model'); return; }
+    ACT.idle.play();
+    curAction = ACT.idle;
+    function crossTo(a, dur) {
+      if (!a || a === curAction) return;
+      const prev = curAction;
+      a.enabled = true;
+      a.reset();
+      a.setEffectiveWeight(1);
+      a.fadeIn(dur || 0.45);
+      a.play();
+      if (prev) prev.fadeOut(dur || 0.45);
+      curAction = a;
+    }
+
+    // Camera: frame the dog from the head side, gentle three-quarter.
+    const hv = new THREE.Vector3(), tv = new THREE.Vector3();
+    B.Head.getWorldPosition(hv);
+    if (B.Tail1) B.Tail1.getWorldPosition(tv); else tv.set(hv.x, hv.y, hv.z - 0.5);
+    const fwd = hv.clone().sub(tv); fwd.y = 0;
+    if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, 1);
+    fwd.normalize();
+    const side = new THREE.Vector3(-fwd.z, 0, fwd.x);
+    camera.position.copy(hv)
+      .addScaledVector(fwd, 1.5).addScaledVector(side, 0.52);
+    camera.position.y = hv.y + 0.14;
+    camera.lookAt(hv.x - fwd.x * 0.34, hv.y - 0.30, hv.z - fwd.z * 0.34);
+    // Warm back wall behind the dog, facing the camera.
+    const wall = new THREE.Mesh(
+      new THREE.PlaneGeometry(18, 9),
+      new THREE.MeshStandardMaterial({ color: 0x4a3423, roughness: 1 }));
+    wall.position.copy(fwd.clone().multiplyScalar(-3.6));
+    wall.position.y = 2.2;
+    wall.lookAt(0, 1.4, 0);
+    scene.add(wall);
+
+    window.worldSetState = (name) => {
+      try {
+        cur = name;
+        W.idle2Until = 0;
+        if (name === 'make') {
+          if (ACT.jump) {
+            crossTo(ACT.jump, 0.12);
+            W.jumpUntil = performance.now() + ACT.jump.getClip().duration * 1000;
+          }
+          W.perkVel += 2.6;
+        } else if (name === 'work') {
+          crossTo(ACT.headlow || ACT.idle2 || ACT.idle, 0.5);
+        } else {
+          crossTo(ACT.idle, 0.4);
+        }
+      } catch (e) { /* state flips must never throw into the stage */ }
+    };
+    window.__lashWorld = {
+      on: () => WORLD.on, jaw: () => W.jaw, state: () => cur, diag: WDIAG,
+      tune: WTUNE,
+      headRot: () => B.Head ? [B.Head.rotation.x, B.Head.rotation.y, B.Head.rotation.z] : null,
+      cam: () => camera.position.toArray(),
+    };
+
+    const clock = new THREE.Clock();
+    const spring = (x, v, target, stiff, damp, dt) => {
+      v += ((target - x) * stiff - v * damp) * dt;
+      x += v * dt;
+      return [x, v];
+    };
+    function tick() {
+      if (!WORLD.on) return;
+      if (document.hidden) return;
+      try {
+        const dt = Math.min(0.05, clock.getDelta());
+        const ts = performance.now(), t = ts / 1000;
+        // Speech envelope -> jaw: identical math to the v6 puppet jaw.
+        let amp = 0;
+        if (PUP.speech) {
+          const sp = PUP.speech;
+          const ct = (sp.mode === 'audio' && currentAudio)
+            ? currentAudio.currentTime : (ts - sp.t0) / 1000;
+          const idx = Math.floor(ct / 0.06);
+          if (idx >= 0 && idx < sp.env.length) amp = sp.env[idx];
+        }
+        W.jaw += (amp - W.jaw) * (amp > W.jaw ? 0.55 : 0.30);
+        if (W.jaw < 0.003 && !PUP.speech) W.jaw = 0;
+        if (PUP.speech && !W.prevSpeech) W.perkVel += 2.2;   // line start: ears up
+        W.prevSpeech = PUP.speech;
+        const perkT = PUP.speech ? 0.8 : (cur === 'make' ? 1.0 : (cur === 'work' ? 0.35 : 0.12));
+        [W.perk, W.perkVel] = spring(W.perk, W.perkVel, perkT, 110, 13, dt);
+        [W.tilt, W.tiltVel] = spring(W.tilt, W.tiltVel, cur === 'work' ? WTUNE.tiltRad : 0, 46, 10, dt);
+        [W.look, W.lookVel] = spring(W.look, W.lookVel, cur === 'work' ? WTUNE.lookDown : 0, 46, 10, dt);
+        if (ACT.jump && curAction === ACT.jump && ts > W.jumpUntil && W.jumpUntil)
+          crossTo(ACT.idle, 0.35);
+        // Idle variety: an occasional Idle_2 visit while just listening.
+        if (cur === 'idle' && !PUP.speech && ACT.idle2) {
+          if (!W.idle2Until && ts > W.nextIdle2) { crossTo(ACT.idle2, 0.6); W.idle2Until = ts + 3600; }
+          else if (W.idle2Until && ts > W.idle2Until) {
+            W.idle2Until = 0; W.nextIdle2 = ts + 9000 + Math.random() * 6000;
+            crossTo(ACT.idle, 0.6);
+          }
+        }
+        // Procedural layer: deltas added on top of the clip pose. Every
+        // delta is UNDONE before the next mixer.update — a channel the
+        // clip doesn't animate would otherwise accumulate our deltas
+        // frame over frame (that bug stretched the neck in testing).
+        for (const [obj, key2, val] of W.applied) obj[key2] -= val;
+        W.applied.length = 0;
+        mixer.update(dt);
+        const add = (obj, key2, val) => { obj[key2] += val; W.applied.push([obj, key2, val]); };
+        const jaw = W.jaw;
+        if (B.Head) {
+          add(B.Head.rotation, 'x', WTUNE.pitchSign * (jaw * WTUNE.jawDip + W.look));
+          add(B.Head.rotation, 'z', WTUNE.tiltSign * W.tilt);
+          add(B.Head.position, 'y', -jaw * WTUNE.jawDrop);
+        }
+        if (B.Neck3) add(B.Neck3.rotation, 'x', WTUNE.pitchSign * jaw * WTUNE.neckDip);
+        if (B.Neck1) add(B.Neck1.rotation, 'x', WTUNE.pitchSign * W.look * 0.4);
+        if (B.Torso) add(B.Torso.rotation, 'x', Math.sin(t * (2 * Math.PI / 3.6)) * 0.012);
+        // Ears: perk splay + the blink-equivalent (a quick single-ear flick).
+        let flick = 0;
+        if (W.flickT0 < 0 && ts > W.flickAt) { W.flickT0 = ts; W.flickEar = Math.random() < 0.5 ? 'L' : 'R'; }
+        if (W.flickT0 >= 0) {
+          const p = (ts - W.flickT0) / 240;
+          if (p >= 1) { W.flickT0 = -1; W.flickAt = ts + 2400 + Math.random() * 3200; }
+          else flick = Math.sin(p * Math.PI);
+        }
+        const earSwing = Math.sin(t * 0.9) * 0.03 * (1 - W.perk * 0.5);
+        if (B['Ear1.L']) {
+          add(B['Ear1.L'].rotation, 'z', WTUNE.earSplay * W.perk + earSwing +
+            (W.flickEar === 'L' ? flick * 0.35 : 0));
+          add(B['Ear1.L'].rotation, 'x', -WTUNE.earBack * W.perk);
+        }
+        if (B['Ear1.R']) {
+          add(B['Ear1.R'].rotation, 'z', -WTUNE.earSplay * W.perk - earSwing -
+            (W.flickEar === 'R' ? flick * 0.35 : 0));
+          add(B['Ear1.R'].rotation, 'x', -WTUNE.earBack * W.perk);
+        }
+        // Tail wag: faster and wider when greeting or talking.
+        const wagSpeed = cur === 'make' ? 10 : (PUP.speech ? 6.5 : 2.4);
+        const wagAmp = cur === 'make' ? 0.5 : (PUP.speech ? 0.36 : 0.16);
+        W.wagPhase += dt * wagSpeed;
+        if (B.Tail1) add(B.Tail1.rotation, 'y', Math.sin(W.wagPhase) * wagAmp);
+        if (B.Tail2) add(B.Tail2.rotation, 'y', Math.sin(W.wagPhase - 0.7) * wagAmp * 0.7);
+        renderer.render(scene, camera);
+        W.errStreak = 0;
+      } catch (e) {
+        W.errStreak += 1;
+        WDIAG.err = String((e && e.message) || e);
+        if (W.errStreak > 5) worldDisable();
+      }
+    }
+    worldEnable();
+    renderer.setAnimationLoop(tick);
+  } catch (e) { worldFail('build', e); }
+})();
 </script>
 </body>
 </html>
