@@ -297,16 +297,18 @@ function faceTalk(on) { faceShow(on ? 'talk' : 'idle'); }
 // envelope (text lane, relay-WS and GitHub transports) get a synthesized
 // envelope from the text: one decaying pulse per syllable.
 //
-// Geometry constants mirror puppet/manifest.json (frame = the 900x900
-// crop at source (470,0) of the avatar still).
+// Geometry constants mirror puppet/manifest2.json (stage v8 layers:
+// frame = the 1000x1000 region at source (318,20) of the approved
+// front-facing portrait lash-portrait-v2.png, resampled x0.9 onto the
+// 900x900 canvas — see puppet/cut_layers_v2.py).
 const PUP_EAR = {
-  L: {dx: 140, dy: 35, px: 230, py: 335, img: 'earL', dir: -1},
-  R: {dx: 505, dy: 25, px: 582, py: 232, img: 'earR', dir: 1},
+  L: {dx: 123, dy: 4, px: 258, py: 338, img: 'earL', dir: -1},
+  R: {dx: 474, dy: 0, px: 625, py: 322, img: 'earR', dir: 1},
 };
-const PUP_WARP = {x: 300, y: 540, w: 480, h: 205, peakY: 695,
-                  mx: 588, my: 580, travel: 17, step: 9};
-const PUP_PIVOT = [410, 830];
-const PUP_BLINK = {L: [340, 322], R: [542, 309]};
+const PUP_WARP = {x: 215, y: 608, w: 490, h: 282, peakY: 842,
+                  mx: 460, my: 655, travel: 20, step: 9};
+const PUP_PIVOT = [460, 852];
+const PUP_BLINK = {L: [272, 324], R: [516, 311]};
 
 function puppetSetState(name) {
   if (name === 'make') PUP.bounceT0 = performance.now();
@@ -384,9 +386,9 @@ function puppetEnable() {
   requestAnimationFrame(puppetFrame);
 }
 (function puppetLoad() {
-  const files = {base: 'puppet-base.webp', earL: 'puppet-ear-l.webp',
-                 earR: 'puppet-ear-r.webp', blinkL: 'puppet-blink-l.webp',
-                 blinkR: 'puppet-blink-r.webp'};
+  const files = {base: 'puppet2-base.webp', earL: 'puppet2-ear-l.webp',
+                 earR: 'puppet2-ear-r.webp', blinkL: 'puppet2-blink-l.webp',
+                 blinkR: 'puppet2-blink-r.webp'};
   const need = ['base', 'earL', 'earR'];
   let ok = 0, dead = false;
   for (const [k, f] of Object.entries(files)) {
