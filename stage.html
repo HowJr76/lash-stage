@@ -11,10 +11,14 @@
   #wrap { height:100%; display:flex; flex-direction:column; align-items:center;
     justify-content:center; gap:18px; padding:24px; box-sizing:border-box; }
   #face { width:220px; height:220px; border-radius:50%;
-    background: radial-gradient(circle at 35% 30%, #3d4b57, #1b232b);
+    background:#fff;
     display:flex; align-items:center; justify-content:center;
-    font-size:110px; border:4px solid #2c3944; transition: box-shadow .25s; }
-  #face.speaking { box-shadow: 0 0 0 10px rgba(90,180,255,.25), 0 0 60px rgba(90,180,255,.35); }
+    font-size:110px; border:4px solid #2c3944; transition: box-shadow .25s;
+    overflow:hidden; }
+  #face video { width:100%; height:100%; object-fit:cover; display:block; }
+  #face.speaking { box-shadow: 0 0 0 10px rgba(90,180,255,.25), 0 0 60px rgba(90,180,255,.35);
+    animation: talkbob .9s ease-in-out infinite; }
+  @keyframes talkbob { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
   #face.listening { box-shadow: 0 0 0 8px rgba(120,255,170,.18); }
   #name { font-size:28px; font-weight:600; letter-spacing:.02em; }
   #status { font-size:15px; color:#9fb2c1; min-height:20px; }
@@ -26,7 +30,7 @@
 </head>
 <body>
 <div id="wrap">
-  <div id="face">🐶</div>
+  <div id="face"><video id="faceVideo" src="lash-face.mp4" poster="lash-face.jpg" autoplay muted loop playsinline></video></div>
   <div id="name">Lash</div>
   <div id="status">connecting…</div>
   <div id="caption"></div>
@@ -46,6 +50,15 @@ let currentAudio = null;
 let currentText = '';
 
 function setStatus(s) { statusEl.textContent = s; }
+
+// Face media fallback: if the video can't load (e.g. local relay serving),
+// fall back to the emoji so the stage never shows a broken medallion.
+try {
+  const fv = document.getElementById('faceVideo');
+  fv.addEventListener('error', () => { face.textContent = '🐶'; }, true);
+  const p = fv.play && fv.play();
+  if (p && p.catch) p.catch(() => {});
+} catch (e) { /* the poster/emoji world still works */ }
 
 // ---- transport selection ----
 // GitHub-mailbox mode (?gh=<owner/repo>&pat=<token>&session=<id>): production.
