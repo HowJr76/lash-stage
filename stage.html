@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lash</title>
+<script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
 <style>
   html, body { margin:0; height:100%; background:#101418; color:#e8eef2;
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -61,6 +62,53 @@ const BRANCH = qs.get('branch') || 'main';
 const ghMode = !!(GH && PAT);
 const GH_API = `https://api.github.com/repos/${GH}`;
 const SESS = `sessions/${SESSION}`;
+
+// ---- live-wire mode (?live=<ably key>): Phase 2 production transport ----
+// Ably channels lash-<session>-up (this page publishes utterances/control)
+// and lash-<session>-down (speech lines + binary audio frames). GitHub
+// stays as the archive, written by the bridge — not the road.
+const LIVE_KEY = qs.get('live');
+const liveMode = !!LIVE_KEY;
+let upCh = null, downCh = null;
+const pendingLines = new Map();
+const pendingAudio = new Map();
+function pairSpeech(seq) {
+  const line = pendingLines.get(seq);
+  const url = pendingAudio.get(seq);
+  if (!line || !url) return;
+  pendingLines.delete(seq);
+  pendingAudio.delete(seq);
+  queue.push({seq, text: line.text, audio_url: url});
+  playNext();
+}
+if (liveMode && window.Ably) {
+  try {
+    const ably = new Ably.Realtime({key: LIVE_KEY, clientId: 'stage'});
+    upCh = ably.channels.get(`lash-${SESSION}-up`);
+    downCh = ably.channels.get(`lash-${SESSION}-down`);
+    ably.connection.on('connected', () => {
+      setStatus('listening (live)');
+      face.className = 'listening';
+    });
+    ably.connection.on('failed', () => setStatus('live wire failed'));
+    downCh.subscribe('line', (m) => {
+      pendingLines.set(m.data.seq, m.data);
+      setTimeout(() => pendingLines.delete(m.data.seq), 8000);
+      pairSpeech(m.data.seq);
+    });
+    downCh.subscribe('audio', (m) => {
+      try {
+        const buf = m.data;
+        const seq = new DataView(buf).getUint32(0);
+        const blob = new Blob([buf.slice(4)], {type: 'audio/mpeg'});
+        pendingAudio.set(seq, URL.createObjectURL(blob));
+        setTimeout(() => pendingAudio.delete(seq), 8000);
+        pairSpeech(seq);
+      } catch (e) { /* bad frame — skip */ }
+    });
+    downCh.subscribe('flush', () => stopPlayback());
+  } catch (e) { setStatus('live wire error'); }
+}
 
 // ---- relay websocket (local-test transport) ----
 const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -138,7 +186,10 @@ try {
       const now = Date.now();
       if (now - lastBargeAt > 2000) {
         lastBargeAt = now;
-        if (ghMode) ghPutJSON(`${SESS}/c/${now}-barge.json`,
+        if (liveMode && upCh)
+          upCh.publish('control', {type:'speaking_started',
+                                   detail: currentText, ts: now});
+        else if (ghMode) ghPutJSON(`${SESS}/c/${now}-barge.json`,
                               {type:'speaking_started', detail: currentText, ts: now});
         else if (relay.readyState === 1)
           relay.send(JSON.stringify({type:'speaking_started', during_text: currentText}));
@@ -148,7 +199,9 @@ try {
     if (isFinal && text !== lastSent) {
       lastSent = text;
       heardEl.textContent = 'Howard: ' + text;
-      if (ghMode) {
+      if (liveMode && upCh) {
+        upCh.publish('utterance', {speaker: 'Howard', text, ts: Date.now()});
+      } else if (ghMode) {
         ghPutJSON(`${SESS}/u/${Date.now()}-${Math.random().toString(36).slice(2,8)}.json`,
                   {speaker: 'Howard', text, ts: Date.now()});
       } else if (relay.readyState === 1) {
@@ -199,7 +252,7 @@ async function ghRawObjectURL(path) {
   return URL.createObjectURL(blob);
 }
 
-if (ghMode) {
+if (ghMode && !liveMode) {
   setStatus('listening');
   face.className = 'listening';
   let etag = null;
