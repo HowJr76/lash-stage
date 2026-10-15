@@ -144,10 +144,10 @@ try {
 
 // ---- relay websocket (local-test transport) ----
 const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const relay = ghMode
+const relay = (ghMode || liveMode)
   ? { readyState: 0, send: () => {} }
   : new WebSocket(`${proto}//${location.host}/stage-ws?t=${token}`);
-if (!ghMode) {
+if (!ghMode && !liveMode) {
 relay.onopen = () => setStatus('listening');
 relay.onclose = () => setStatus('relay disconnected');
 relay.onmessage = (ev) => {
