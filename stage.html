@@ -7,8 +7,8 @@
 <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
 <script type="importmap">
 {"imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  "three": "./three.module.js",
+  "three/addons/": "./addons/"
 }}
 </script>
 <style>
@@ -181,10 +181,12 @@ function worldTelemetry() {
   return {
     state: WORLD.on ? 'engaged' : (d.err ? 'failed' : 'pending'),
     stage: d.stage, err: d.err,
-    webgl: !!d.webgl, gl: d.gl || null,
+    webgl: !!d.webgl, gl: d.gl || null, glKind: d.glKind || null,
     three: d.threeImport || 'pending',
     model: d.modelFetch || 'pending',
     bones: (d.bones || []).length,
+    frames: d.frames || 0,
+    hidden: document.hidden,
     errors: (d.errors || []).slice(0, 4),
   };
 }
@@ -715,7 +717,8 @@ if (ghMode && !liveMode) {
 // runtime errors all leave WORLD.on false (or flip it back off) and the
 // v6 puppet / v5 medallion run the call untouched. This layer can never
 // produce a black or broken tile.
-const WDIAG = { webgl: false, stage: 'boot', err: null, gl: null, bones: [], clips: [],
+const WDIAG = { webgl: false, stage: 'boot', err: null, gl: null, glKind: null,
+                bones: [], clips: [], frames: 0,
                 threeImport: 'pending', modelFetch: 'pending', errors: [] };
 window.__lashWorldDiag = WDIAG;
 // v7.1 telemetry: capture the first errors of the page's life (the world
@@ -753,10 +756,17 @@ function worldFail(stage, err) {
   let THREE, GLTFLoader;
   try {
     const probe = document.createElement('canvas');
-    const gl = probe.getContext('webgl2') || probe.getContext('webgl') ||
-               probe.getContext('experimental-webgl');
+    // v7.2: ask permissively — a bot browser on software GL can refuse a
+    // default-attributes context it would grant with these flags.
+    const probeAttrs = { failIfMajorPerformanceCaveat: false,
+                         powerPreference: 'low-power', antialias: false };
+    let gl = null, glKind = null;
+    try { gl = probe.getContext('webgl2', probeAttrs); if (gl) glKind = 'webgl2'; } catch (e) {}
+    if (!gl) { try { gl = probe.getContext('webgl', probeAttrs); if (gl) glKind = 'webgl'; } catch (e) {} }
+    if (!gl) { try { gl = probe.getContext('experimental-webgl', probeAttrs); if (gl) glKind = 'experimental'; } catch (e) {} }
     if (!gl) { worldFail('webgl', 'no WebGL context in this browser'); return; }
     WDIAG.webgl = true;
+    WDIAG.glKind = glKind;
     try {
       const ext = gl.getExtension('WEBGL_debug_renderer_info');
       WDIAG.gl = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL))
@@ -814,6 +824,9 @@ function worldFail(stage, err) {
     WORLD.on = true;
     WDIAG.stage = 'live';
     worldNotify();
+    // One delayed snapshot so the log also shows the rAF frame count —
+    // proof the world is actually animating, not just initialized.
+    setTimeout(() => worldNotify(), 15000);
     if (window.worldSetState) window.worldSetState(faceState);
   }
 
@@ -985,6 +998,7 @@ function worldFail(stage, err) {
       if (!WORLD.on) return;
       if (document.hidden) return;
       try {
+        WDIAG.frames += 1;
         const dt = Math.min(0.05, clock.getDelta());
         const ts = performance.now(), t = ts / 1000;
         // Speech envelope -> jaw: identical math to the v6 puppet jaw.
