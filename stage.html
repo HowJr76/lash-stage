@@ -89,6 +89,7 @@ if (liveMode && window.Ably) {
     ably.connection.on('connected', () => {
       setStatus('listening (live)');
       face.className = 'listening';
+      publishHello();
     });
     ably.connection.on('failed', () => setStatus('live wire failed'));
     downCh.subscribe('line', (m) => {
@@ -107,8 +108,39 @@ if (liveMode && window.Ably) {
       } catch (e) { /* bad frame — skip */ }
     });
     downCh.subscribe('flush', () => stopPlayback());
+    downCh.subscribe('say_text', (m) => {
+      queue.push({seq: m.data.seq, kind: 'text', text: m.data.text,
+                  voiceName: m.data.voiceName || null,
+                  rate: m.data.rate || 1.0, pitch: m.data.pitch ?? 1.0});
+      playNext();
+    });
   } catch (e) { setStatus('live wire error'); }
 }
+
+// ---- capability handshake ----
+// Announce this browser's speech-synthesis inventory up the wire so the
+// bridge can negotiate a voice profile and use the text lane (speak here)
+// instead of shipping rendered audio. Republish as voices load.
+let helloCount = 0;
+let lastVoiceSig = '';
+function publishHello() {
+  if (!upCh || helloCount >= 4) return;
+  let voices = [];
+  try {
+    voices = (window.speechSynthesis ? speechSynthesis.getVoices() : [])
+      .map(v => ({name: v.name, lang: v.lang,
+                  localService: !!v.localService, isDefault: !!v.default}));
+  } catch (e) { /* no synthesis in this browser */ }
+  const sig = voices.map(v => v.name).join('|');
+  if (sig === lastVoiceSig && helloCount > 0) return;
+  lastVoiceSig = sig;
+  helloCount += 1;
+  upCh.publish('hello', {voices, ua: navigator.userAgent, ts: Date.now()});
+}
+try {
+  if (window.speechSynthesis)
+    speechSynthesis.onvoiceschanged = () => publishHello();
+} catch (e) { /* ignore */ }
 
 // ---- relay websocket (local-test transport) ----
 const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -143,6 +175,37 @@ async function playNext() {
   captionEl.textContent = item.text;
   face.className = 'speaking';
   setStatus('speaking');
+  if (item.kind === 'text') {
+    // Text lane: this browser speaks. Negotiated voice, MP3 fallback is
+    // the bridge's job (triggered by the synth_error report below).
+    try {
+      const voices = speechSynthesis.getVoices();
+      const v = voices.find(x => x.name === item.voiceName)
+             || voices.find(x => x.lang && x.lang.startsWith('en'))
+             || voices[0];
+      if (!v) throw new Error('no voices');
+      const u = new SpeechSynthesisUtterance(item.text);
+      u.voice = v;
+      u.rate = item.rate || 1.0;
+      u.pitch = item.pitch ?? 1.0;
+      u.onend = () => {
+        if (upCh) upCh.publish('control',
+          {type: 'speech_done', seq: item.seq, ok: true});
+        donePlaying(item);
+      };
+      u.onerror = (ev) => {
+        if (upCh) upCh.publish('control',
+          {type: 'synth_error', seq: item.seq, error: String(ev.error || 'synth')});
+        donePlaying(item);
+      };
+      speechSynthesis.speak(u);
+    } catch (e) {
+      if (upCh) upCh.publish('control',
+        {type: 'synth_error', seq: item.seq, error: String(e && e.message || e)});
+      donePlaying(item);
+    }
+    return;
+  }
   try {
     let url = item.audio_url;
     if (item.gh_audio_path) url = await ghRawObjectURL(item.gh_audio_path);
@@ -162,6 +225,7 @@ function donePlaying(item) {
 }
 function stopPlayback() {
   queue.length = 0;
+  try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch {}
   if (currentAudio) { try { currentAudio.pause(); } catch {} currentAudio = null; }
   playing = false;
   face.className = 'listening';
