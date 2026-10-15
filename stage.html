@@ -306,7 +306,7 @@ const PUP_EAR = {
   R: {dx: 474, dy: 0, px: 625, py: 322, img: 'earR', dir: 1},
 };
 const PUP_WARP = {x: 215, y: 608, w: 490, h: 282, peakY: 842,
-                  mx: 460, my: 655, travel: 20, step: 9};
+                  mx: 460, my: 655, travel: 36, step: 9};
 const PUP_PIVOT = [460, 852];
 const PUP_BLINK = {L: [272, 324], R: [516, 311]};
 
@@ -405,7 +405,11 @@ function puppetEnable() {
 function pupProfile(y) {
   const W = PUP_WARP;
   if (y <= W.y) return 0;
-  if (y <= W.peakY) { const t = (y - W.y) / (W.peakY - W.y); return t * t * (3 - 2 * t); }
+  // Ramp compressed x1.5 (2026-10-15 jaw-visibility fix): displacement
+  // must arrive AT the mouth band, not only deep in the beard — with
+  // the old linear ramp the mouth line itself moved ~2px at full jaw
+  // and the motion was invisible at Meet tile sizes (harness-measured).
+  if (y <= W.peakY) { const t = Math.min(1, (y - W.y) / (W.peakY - W.y) * 1.5); return t * t * (3 - 2 * t); }
   return Math.max(0.45, 1 - 0.55 * (y - W.peakY) / (W.y + W.h - W.peakY));
 }
 
@@ -469,16 +473,18 @@ function puppetFrame(ts) {
       for (let y0 = W.y; y0 < W.y + W.h; y0 += W.step) {
         const off = pupProfile(y0 + W.step / 2) * W.travel * PUP.jaw;
         if (off < 0.2) continue;
-        ctx.drawImage(base, W.x, y0, W.w, W.step + 3,
-                      W.x, y0 + off, W.w, W.step + 3);
+        ctx.drawImage(base, W.x, y0, W.w, W.step + 6,
+                      W.x, y0 + off, W.w, W.step + 6);
       }
-      // soft mouth shadow that grows as the jaw opens
+      // soft mouth shadow that grows as the jaw opens — deepened
+      // (2026-10-15): at alpha 0.34 it measured +1.8 luminance against
+      // the closed mouth, i.e. no visible oral cavity at all.
       const g = ctx.createRadialGradient(W.mx, W.my, 4, W.mx, W.my, 95);
-      g.addColorStop(0, `rgba(26,18,12,${0.34 * PUP.jaw})`);
+      g.addColorStop(0, `rgba(26,18,12,${0.60 * PUP.jaw})`);
       g.addColorStop(1, 'rgba(26,18,12,0)');
       ctx.save();
       ctx.translate(W.mx, W.my);
-      ctx.scale(1, (4 + 13 * PUP.jaw) / 95);
+      ctx.scale(1, (5 + 21 * PUP.jaw) / 95);
       ctx.translate(-W.mx, -W.my);
       ctx.fillStyle = g;
       ctx.fillRect(W.mx - 95, W.my - 95, 190, 190);
