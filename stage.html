@@ -30,7 +30,7 @@
 </head>
 <body>
 <div id="wrap">
-  <div id="face"><video id="faceVideo" src="lash-face.mp4" poster="lash-face.jpg" autoplay muted loop playsinline></video></div>
+  <div id="face"><video id="faceVideo" src="lash-face.mp4" poster="lash-face.jpg" autoplay muted loop playsinline></video><video id="faceTalk" src="lash-talk.mp4" muted loop playsinline preload="auto" style="display:none"></video></div>
   <div id="name">Lash</div>
   <div id="status">connecting…</div>
   <div id="caption"></div>
@@ -179,6 +179,18 @@ relay.onmessage = (ev) => {
 };
 } // end if (!ghMode)
 
+// Face animation: the medallion swaps to the close-up "talking" portrait
+// while a line plays and back to the seated idle portrait when it ends.
+function faceTalk(on) {
+  try {
+    const idle = document.getElementById('faceVideo');
+    const talk = document.getElementById('faceTalk');
+    if (!idle || !talk) return;
+    if (on) { talk.style.display = 'block'; idle.style.display = 'none'; const p = talk.play(); if (p && p.catch) p.catch(() => {}); }
+    else { talk.style.display = 'none'; idle.style.display = 'block'; const p = idle.play(); if (p && p.catch) p.catch(() => {}); }
+  } catch (e) { /* medallion keeps the idle portrait */ }
+}
+
 // ---- playback ----
 async function playNext() {
   if (playing || queue.length === 0) return;
@@ -187,6 +199,7 @@ async function playNext() {
   currentText = item.text;
   captionEl.textContent = item.text;
   face.className = 'speaking';
+  faceTalk(true);
   setStatus('speaking');
   if (item.kind === 'text') {
     // Text lane: this browser speaks. Negotiated voice, MP3 fallback is
@@ -232,6 +245,7 @@ function donePlaying(item) {
   playing = false;
   currentAudio = null;
   face.className = 'listening';
+  faceTalk(false);
   setStatus('listening');
   if (relay.readyState === 1) relay.send(JSON.stringify({type:'playback_done', seq:item.seq}));
   playNext();
@@ -242,6 +256,7 @@ function stopPlayback() {
   if (currentAudio) { try { currentAudio.pause(); } catch {} currentAudio = null; }
   playing = false;
   face.className = 'listening';
+  faceTalk(false);
   setStatus('listening');
 }
 
