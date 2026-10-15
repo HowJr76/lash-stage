@@ -30,7 +30,7 @@
 </head>
 <body>
 <div id="wrap">
-  <div id="face"><video id="faceVideo" src="lash-face.mp4" poster="lash-face.jpg" autoplay muted loop playsinline></video><video id="faceTalk" src="lash-talk.mp4" muted loop playsinline preload="auto" style="display:none"></video></div>
+  <div id="face"><video id="faceVideo" src="lash-face.mp4" poster="lash-face.jpg" autoplay muted loop playsinline></video><video id="faceTalk" src="lash-talk.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceWork" src="lash-work.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceMake" src="lash-make.mp4" muted loop playsinline preload="auto" style="display:none"></video></div>
   <div id="name">Lash</div>
   <div id="status">connecting…</div>
   <div id="caption"></div>
@@ -103,6 +103,9 @@ if (liveMode && window.Ably) {
       setStatus('listening (live)');
       face.className = 'listening';
       publishHello();
+      // Greeting: the playful standing portrait for the first seconds.
+      faceShow('make');
+      setTimeout(() => { if (faceState === 'make' && !playing) faceShow('idle'); }, 8000);
     });
     ably.connection.on('failed', () => setStatus('live wire failed'));
     downCh.subscribe('line', (m) => {
@@ -126,6 +129,17 @@ if (liveMode && window.Ably) {
                   voiceName: m.data.voiceName || null,
                   rate: m.data.rate || 1.0, pitch: m.data.pitch ?? 1.0});
       playNext();
+    });
+    // Face-state signals from the bridge (e.g. thinking while a reply is
+    // being composed). Never fight active speech; auto-revert to idle.
+    let thinkTimer = null;
+    downCh.subscribe('face', (m) => {
+      if (!m.data || playing) return;
+      if (m.data.state === 'thinking') {
+        faceShow('work');
+        clearTimeout(thinkTimer);
+        thinkTimer = setTimeout(() => { if (!playing) faceShow('idle'); }, 25000);
+      }
     });
   } catch (e) { setStatus('live wire error'); }
 }
@@ -179,17 +193,27 @@ relay.onmessage = (ev) => {
 };
 } // end if (!ghMode)
 
-// Face animation: the medallion swaps to the close-up "talking" portrait
-// while a line plays and back to the seated idle portrait when it ends.
-function faceTalk(on) {
+// Face animation system: the medallion carries Lash's full set of
+// animated portraits and swaps by state —
+//   idle  = seated portrait (listening)
+//   talk  = close-up portrait (speaking)
+//   work  = headphones at the laptop (thinking / composing a reply)
+//   make  = standing, playful (greeting on arrival)
+const FACE_VIDS = { idle: 'faceVideo', talk: 'faceTalk', work: 'faceWork', make: 'faceMake' };
+let faceState = 'idle';
+function faceShow(name) {
   try {
-    const idle = document.getElementById('faceVideo');
-    const talk = document.getElementById('faceTalk');
-    if (!idle || !talk) return;
-    if (on) { talk.style.display = 'block'; idle.style.display = 'none'; const p = talk.play(); if (p && p.catch) p.catch(() => {}); }
-    else { talk.style.display = 'none'; idle.style.display = 'block'; const p = idle.play(); if (p && p.catch) p.catch(() => {}); }
-  } catch (e) { /* medallion keeps the idle portrait */ }
+    if (!FACE_VIDS[name]) name = 'idle';
+    faceState = name;
+    for (const [k, id] of Object.entries(FACE_VIDS)) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      if (k === name) { el.style.display = 'block'; const p = el.play(); if (p && p.catch) p.catch(() => {}); }
+      else { el.style.display = 'none'; try { el.pause(); } catch (e) {} }
+    }
+  } catch (e) { /* medallion keeps whatever portrait it has */ }
 }
+function faceTalk(on) { faceShow(on ? 'talk' : 'idle'); }
 
 // ---- playback ----
 async function playNext() {
