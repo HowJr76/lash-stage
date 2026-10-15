@@ -172,8 +172,25 @@ if (liveMode && window.Ably) {
 // instead of shipping rendered audio. Republish as voices load.
 let helloCount = 0;
 let lastVoiceSig = '';
-function publishHello() {
-  if (!upCh || helloCount >= 4) return;
+// World telemetry (v7.1): what the 3D layer is doing in THIS browser —
+// the local test harness could not see CDN/WebGL reality, so the stage
+// now reports it up the wire in every hello.
+function worldTelemetry() {
+  const d = window.__lashWorldDiag;
+  if (!d) return { state: 'absent' };
+  return {
+    state: WORLD.on ? 'engaged' : (d.err ? 'failed' : 'pending'),
+    stage: d.stage, err: d.err,
+    webgl: !!d.webgl, gl: d.gl || null,
+    three: d.threeImport || 'pending',
+    model: d.modelFetch || 'pending',
+    bones: (d.bones || []).length,
+    errors: (d.errors || []).slice(0, 4),
+  };
+}
+function publishHello(force) {
+  if (!upCh) return;
+  if (!force && helloCount >= 4) return;
   let voices = [];
   try {
     voices = (window.speechSynthesis ? speechSynthesis.getVoices() : [])
@@ -181,11 +198,27 @@ function publishHello() {
                   localService: !!v.localService, isDefault: !!v.default}));
   } catch (e) { /* no synthesis in this browser */ }
   const sig = voices.map(v => v.name).join('|');
-  if (sig === lastVoiceSig && helloCount > 0) return;
+  if (!force && sig === lastVoiceSig && helloCount > 0) return;
   lastVoiceSig = sig;
   helloCount += 1;
-  upCh.publish('hello', {voices, ua: navigator.userAgent, ts: Date.now()});
+  let world = null;
+  try { world = worldTelemetry(); } catch (e) { /* telemetry must never break hello */ }
+  upCh.publish('hello', {voices, ua: navigator.userAgent, ts: Date.now(), world});
 }
+window.__lashHello = () => publishHello(true);
+// Re-publish hello whenever the world state changes (engaged / failed /
+// stage transitions) so the bridge log captures the resolution.
+let lastWorldPubSig = '';
+let worldWatchTicks = 0;
+const worldWatch = setInterval(() => {
+  try {
+    if (++worldWatchTicks > 48) { clearInterval(worldWatch); return; }
+    if (!window.__lashWorldDiag) return;
+    const w = worldTelemetry();
+    const s = [w.state, w.stage, w.err, w.three, w.model].join('|');
+    if (s !== lastWorldPubSig) { lastWorldPubSig = s; publishHello(true); }
+  } catch (e) { /* watcher must never throw into the stage */ }
+}, 2500);
 try {
   if (window.speechSynthesis)
     speechSynthesis.onvoiceschanged = () => publishHello();
@@ -682,8 +715,24 @@ if (ghMode && !liveMode) {
 // runtime errors all leave WORLD.on false (or flip it back off) and the
 // v6 puppet / v5 medallion run the call untouched. This layer can never
 // produce a black or broken tile.
-const WDIAG = { webgl: false, stage: 'boot', err: null, gl: null, bones: [], clips: [] };
+const WDIAG = { webgl: false, stage: 'boot', err: null, gl: null, bones: [], clips: [],
+                threeImport: 'pending', modelFetch: 'pending', errors: [] };
 window.__lashWorldDiag = WDIAG;
+// v7.1 telemetry: capture the first errors of the page's life (the world
+// init window) and re-publish hello at every world resolution so the
+// bridge log shows what actually happened in the real browser.
+const worldNotify = () => { try { if (window.__lashHello) window.__lashHello(); } catch (e) {} };
+try {
+  const cap = (msg) => { try {
+    if (WDIAG.errors.length < 6) WDIAG.errors.push(String(msg).slice(0, 240));
+  } catch (e) {} };
+  window.addEventListener('error', (ev) => {
+    if (performance.now() < 40000) cap('onerror: ' + (ev.message || ev.type || 'unknown'));
+  });
+  window.addEventListener('unhandledrejection', (ev) => {
+    cap('reject: ' + ((ev.reason && ev.reason.message) || ev.reason || 'unknown'));
+  });
+} catch (e) { /* capture is best-effort */ }
 const DOG_URL = window.__LASH_DOG_URL || 'dog.glb';
 const WTUNE = { pitchSign: -1, tiltSign: 1, jawDip: 0.17, jawDrop: 0.012,
                 neckDip: 0.09, tiltRad: 0.17, lookDown: 0.22,
@@ -694,6 +743,10 @@ const wTimeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error(
 function worldFail(stage, err) {
   WDIAG.stage = stage;
   WDIAG.err = String((err && err.message) || err || stage);
+  if (stage === 'imports' && WDIAG.threeImport === 'pending') WDIAG.threeImport = 'fail';
+  if (WDIAG.modelFetch === 'pending' && (stage === 'build' || stage === 'model'))
+    WDIAG.modelFetch = 'fail';
+  worldNotify();
 }
 
 (async () => {
@@ -712,6 +765,8 @@ function worldFail(stage, err) {
     WDIAG.stage = 'imports';
     THREE = await import('three');
     ({ GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js'));
+    WDIAG.threeImport = 'ok';
+    worldNotify();
   } catch (e) { worldFail('imports', e); return; }
 
   const B = {};            // bones by name
@@ -728,6 +783,7 @@ function worldFail(stage, err) {
     if (!WORLD.on) return;
     WORLD.on = false;
     WDIAG.stage = 'disabled-runtime';
+    worldNotify();
     const holder = document.getElementById('world3d');
     if (holder) holder.style.display = 'none';
     if (renderer) { try { renderer.setAnimationLoop(null); } catch (e) {} }
@@ -757,6 +813,7 @@ function worldFail(stage, err) {
     holder.style.display = 'block';
     WORLD.on = true;
     WDIAG.stage = 'live';
+    worldNotify();
     if (window.worldSetState) window.worldSetState(faceState);
   }
 
@@ -804,6 +861,8 @@ function worldFail(stage, err) {
     WDIAG.stage = 'model';
     const loader = new GLTFLoader();
     const gltf = await Promise.race([loader.loadAsync(DOG_URL), wTimeout(25000)]);
+    WDIAG.modelFetch = 'ok';
+    worldNotify();
     const model = gltf.scene;
     scene.add(model);
     scene.updateMatrixWorld(true);
