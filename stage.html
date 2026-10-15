@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lash</title>
+<style>
+  html, body { margin:0; height:100%; background:#101418; color:#e8eef2;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #wrap { height:100%; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:18px; padding:24px; box-sizing:border-box; }
+  #face { width:220px; height:220px; border-radius:50%;
+    background: radial-gradient(circle at 35% 30%, #3d4b57, #1b232b);
+    display:flex; align-items:center; justify-content:center;
+    font-size:110px; border:4px solid #2c3944; transition: box-shadow .25s; }
+  #face.speaking { box-shadow: 0 0 0 10px rgba(90,180,255,.25), 0 0 60px rgba(90,180,255,.35); }
+  #face.listening { box-shadow: 0 0 0 8px rgba(120,255,170,.18); }
+  #name { font-size:28px; font-weight:600; letter-spacing:.02em; }
+  #status { font-size:15px; color:#9fb2c1; min-height:20px; }
+  #caption { max-width:900px; text-align:center; font-size:20px; line-height:1.45;
+    color:#d7e3ec; min-height:56px; }
+  #heard { max-width:900px; text-align:center; font-size:16px; color:#7f95a7;
+    min-height:22px; font-style: italic; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="face">🐶</div>
+  <div id="name">Lash</div>
+  <div id="status">connecting…</div>
+  <div id="caption"></div>
+  <div id="heard"></div>
+</div>
+<script>
+const qs = new URLSearchParams(location.search);
+const token = qs.get('t') || '';
+const face = document.getElementById('face');
+const statusEl = document.getElementById('status');
+const captionEl = document.getElementById('caption');
+const heardEl = document.getElementById('heard');
+
+const queue = [];
+let playing = false;
+let currentAudio = null;
+let currentText = '';
+
+function setStatus(s) { statusEl.textContent = s; }
+
+// ---- transport selection ----
+// Cloud-mailbox mode (?sb=<supabase url>&anon=<key>&session=<id>): used in
+// production, because the VM can only poll OUTBOUND. Relay-WS mode is the
+// local-test transport.
+const SB_URL = qs.get('sb');
+const SB_ANON = qs.get('anon');
+const SESSION = qs.get('session') || 'dev-session';
+const sbMode = !!(SB_URL && SB_ANON);
+
+// ---- relay websocket (local-test transport) ----
+const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const relay = sbMode
+  ? { readyState: 0, send: () => {} }
+  : new WebSocket(`${proto}//${location.host}/stage-ws?t=${token}`);
+if (!sbMode) {
+relay.onopen = () => setStatus('listening');
+relay.onclose = () => setStatus('relay disconnected');
+relay.onmessage = (ev) => {
+  let m; try { m = JSON.parse(ev.data); } catch { return; }
+  if (m.type === 'say') {
+    queue.push(m);
+    playNext();
+  } else if (m.type === 'flush') {
+    stopPlayback();
+  } else if (m.type === 'heard') {
+    heardEl.textContent = m.speaker + ': ' + m.text;
+  } else if (m.type === 'session_end') {
+    stopPlayback();
+    setStatus('session ended');
+  }
+};
+} // end if (!sbMode)
+
+function playNext() {
+  if (playing || queue.length === 0) return;
+  const item = queue.shift();
+  playing = true;
+  currentText = item.text;
+  captionEl.textContent = item.text;
+  face.className = 'speaking';
+  setStatus('speaking');
+  currentAudio = new Audio(item.audio_url);
+  currentAudio.onended = () => donePlaying(item);
+  currentAudio.onerror = () => donePlaying(item);
+  currentAudio.play().catch(() => donePlaying(item));
+}
+function donePlaying(item) {
+  playing = false;
+  currentAudio = null;
+  face.className = 'listening';
+  setStatus('listening');
+  if (relay.readyState === 1) relay.send(JSON.stringify({type:'playback_done', seq:item.seq}));
+  playNext();
+}
+function stopPlayback() {
+  queue.length = 0;
+  if (currentAudio) { try { currentAudio.pause(); } catch {} currentAudio = null; }
+  playing = false;
+  face.className = 'listening';
+  setStatus('listening');
+}
+
+// ---- Recall in-page transcript stream (only works inside the bot) ----
+// The bot's webpage receives real-time transcripts on this websocket.
+// Final utterances are forwarded to the relay; partial speech while Lash is
+// talking triggers a flush (barge-in).
+try {
+  const rt = new WebSocket('wss://meeting-data.bot.recall.ai/api/v1/transcript');
+  let lastSent = '';
+  rt.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    const tr = m.transcript || m.data?.transcript || {};
+    const words = tr.words || [];
+    const text = words.map(w => w.text).join(' ').trim();
+    if (!text) return;
+    if (playing) {
+      // Howard (or anyone) is talking over Lash — cut Lash off.
+      window.__sbHeardSpeech = true;
+      if (relay.readyState === 1) {
+        relay.send(JSON.stringify({type:'speaking_started', during_text: currentText}));
+      }
+      stopPlayback();
+    }
+    const isFinal = tr.is_final !== false;
+    if (isFinal && text !== lastSent) {
+      lastSent = text;
+      heardEl.textContent = 'Howard: ' + text;
+      if (sbMode) {
+        sbInsert('utterances', {session_id: SESSION, speaker: 'Howard', text});
+      } else if (relay.readyState === 1) {
+        relay.send(JSON.stringify({type:'transcript_final', speaker:'Howard', text}));
+      }
+    }
+  };
+} catch (e) { /* not inside a Recall bot — relay /simulate drives tests */ }
+
+// ---- cloud mailbox (Supabase) ----
+async function sbInsert(table, row) {
+  try {
+    await fetch(`${SB_URL}/rest/v1/${table}`, {
+      method: 'POST',
+      headers: {apikey: SB_ANON, Authorization: `Bearer ${SB_ANON}`,
+                'Content-Type': 'application/json', Prefer: 'return=minimal'},
+      body: JSON.stringify(row),
+    });
+  } catch (e) { /* transient; next utterance retries naturally */ }
+}
+
+if (sbMode) {
+  setStatus('listening');
+  face.className = 'listening';
+  let lastSpeechId = 0;
+  // Resume from the newest existing row so a page reload doesn't replay history.
+  fetch(`${SB_URL}/rest/v1/speeches?session_id=eq.${SESSION}&order=id.desc&limit=1`,
+        {headers: {apikey: SB_ANON, Authorization: `Bearer ${SB_ANON}`}})
+    .then(r => r.json())
+    .then(rows => { if (rows && rows[0]) lastSpeechId = rows[0].id; })
+    .catch(() => {});
+  setInterval(async () => {
+    try {
+      const r = await fetch(
+        `${SB_URL}/rest/v1/speeches?session_id=eq.${SESSION}&id=gt.${lastSpeechId}&order=id.asc`,
+        {headers: {apikey: SB_ANON, Authorization: `Bearer ${SB_ANON}`}});
+      const rows = await r.json();
+      for (const row of rows || []) {
+        lastSpeechId = Math.max(lastSpeechId, row.id);
+        queue.push({seq: row.seq, kind: row.kind, text: row.text,
+                    audio_url: `${SB_URL}/storage/v1/object/public/audio/${row.audio_path}`});
+      }
+      if (rows && rows.length) playNext();
+    } catch (e) { /* poll again next tick */ }
+  }, 700);
+  // Barge-in in sb mode: if the bot's transcript stream reports speech while
+  // we are playing, the Recall handler above already stops playback; also
+  // record the interruption so the brain knows.
+  setInterval(() => {
+    if (playing && window.__sbHeardSpeech) {
+      window.__sbHeardSpeech = false;
+      sbInsert('control', {session_id: SESSION, type: 'speaking_started',
+                           detail: currentText});
+      stopPlayback();
+    }
+  }, 300);
+}
+</script>
+</body>
+</html>
