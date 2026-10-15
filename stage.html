@@ -109,11 +109,17 @@ const pendingLines = new Map();
 const pendingAudio = new Map();
 function pairSpeech(seq) {
   const line = pendingLines.get(seq);
+  if (!line) return;
   const url = pendingAudio.get(seq);
-  if (!line || !url) return;
+  // Oversized lines travel by reference instead of an inline frame
+  // (Ably's 65,536-byte cap): the line carries gh_audio_path and
+  // playNext fetches the MP3 through the existing gh playback path.
+  if (!url && !line.gh_audio_path) return;
   pendingLines.delete(seq);
   pendingAudio.delete(seq);
-  queue.push({seq, text: line.text, audio_url: url, env: line.env || null});
+  queue.push({seq, text: line.text, audio_url: url || null,
+              gh_audio_path: line.gh_audio_path || null,
+              env: line.env || null});
   playNext();
 }
 if (liveMode && window.Ably) {
@@ -205,7 +211,8 @@ function publishHello(force) {
   helloCount += 1;
   let world = null;
   try { world = worldTelemetry(); } catch (e) { /* telemetry must never break hello */ }
-  upCh.publish('hello', {voices, ua: navigator.userAgent, ts: Date.now(), world});
+  upCh.publish('hello', {voices, ua: navigator.userAgent, ts: Date.now(), world,
+                         caps: {audio_ref: 1}});
 }
 window.__lashHello = () => publishHello(true);
 // Re-publish hello whenever the world state changes (engaged / failed /
