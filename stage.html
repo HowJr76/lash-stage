@@ -47,20 +47,27 @@ let currentText = '';
 function setStatus(s) { statusEl.textContent = s; }
 
 // ---- transport selection ----
-// Cloud-mailbox mode (?sb=<supabase url>&anon=<key>&session=<id>): used in
-// production, because the VM can only poll OUTBOUND. Relay-WS mode is the
-// local-test transport.
-const SB_URL = qs.get('sb');
-const SB_ANON = qs.get('anon');
+// GitHub-mailbox mode (?gh=<owner/repo>&pat=<token>&session=<id>): production.
+// Two append-only streams in one private repo, one writer each:
+//   sessions/<id>/u/*  Howard's lines   (this page writes, the bridge reads)
+//   sessions/<id>/s/*  Lash's lines     (the bridge writes, this page reads)
+//   sessions/<id>/a/*  rendered speech audio for the s/ entries
+//   sessions/<id>/c/*  control notes (barge-in, session end)
+// Relay-WS mode is the local-test transport.
+const GH = qs.get('gh');
+const PAT = qs.get('pat');
 const SESSION = qs.get('session') || 'dev-session';
-const sbMode = !!(SB_URL && SB_ANON);
+const BRANCH = qs.get('branch') || 'main';
+const ghMode = !!(GH && PAT);
+const GH_API = `https://api.github.com/repos/${GH}`;
+const SESS = `sessions/${SESSION}`;
 
 // ---- relay websocket (local-test transport) ----
 const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const relay = sbMode
+const relay = ghMode
   ? { readyState: 0, send: () => {} }
   : new WebSocket(`${proto}//${location.host}/stage-ws?t=${token}`);
-if (!sbMode) {
+if (!ghMode) {
 relay.onopen = () => setStatus('listening');
 relay.onclose = () => setStatus('relay disconnected');
 relay.onmessage = (ev) => {
@@ -77,9 +84,10 @@ relay.onmessage = (ev) => {
     setStatus('session ended');
   }
 };
-} // end if (!sbMode)
+} // end if (!ghMode)
 
-function playNext() {
+// ---- playback ----
+async function playNext() {
   if (playing || queue.length === 0) return;
   const item = queue.shift();
   playing = true;
@@ -87,10 +95,14 @@ function playNext() {
   captionEl.textContent = item.text;
   face.className = 'speaking';
   setStatus('speaking');
-  currentAudio = new Audio(item.audio_url);
-  currentAudio.onended = () => donePlaying(item);
-  currentAudio.onerror = () => donePlaying(item);
-  currentAudio.play().catch(() => donePlaying(item));
+  try {
+    let url = item.audio_url;
+    if (item.gh_audio_path) url = await ghRawObjectURL(item.gh_audio_path);
+    currentAudio = new Audio(url);
+    currentAudio.onended = () => donePlaying(item);
+    currentAudio.onerror = () => donePlaying(item);
+    await currentAudio.play();
+  } catch (e) { donePlaying(item); }
 }
 function donePlaying(item) {
   playing = false;
@@ -109,9 +121,9 @@ function stopPlayback() {
 }
 
 // ---- Recall in-page transcript stream (only works inside the bot) ----
-// The bot's webpage receives real-time transcripts on this websocket.
-// Final utterances are forwarded to the relay; partial speech while Lash is
-// talking triggers a flush (barge-in).
+// Final utterances go to the u/ stream; speech while Lash is talking is a
+// barge-in: stop locally at once and drop a control note in c/.
+let lastBargeAt = 0;
 try {
   const rt = new WebSocket('wss://meeting-data.bot.recall.ai/api/v1/transcript');
   let lastSent = '';
@@ -122,73 +134,102 @@ try {
     const text = words.map(w => w.text).join(' ').trim();
     if (!text) return;
     if (playing) {
-      // Howard (or anyone) is talking over Lash — cut Lash off.
-      window.__sbHeardSpeech = true;
-      if (relay.readyState === 1) {
-        relay.send(JSON.stringify({type:'speaking_started', during_text: currentText}));
-      }
       stopPlayback();
+      const now = Date.now();
+      if (now - lastBargeAt > 2000) {
+        lastBargeAt = now;
+        if (ghMode) ghPutJSON(`${SESS}/c/${now}-barge.json`,
+                              {type:'speaking_started', detail: currentText, ts: now});
+        else if (relay.readyState === 1)
+          relay.send(JSON.stringify({type:'speaking_started', during_text: currentText}));
+      }
     }
     const isFinal = tr.is_final !== false;
     if (isFinal && text !== lastSent) {
       lastSent = text;
       heardEl.textContent = 'Howard: ' + text;
-      if (sbMode) {
-        sbInsert('utterances', {session_id: SESSION, speaker: 'Howard', text});
+      if (ghMode) {
+        ghPutJSON(`${SESS}/u/${Date.now()}-${Math.random().toString(36).slice(2,8)}.json`,
+                  {speaker: 'Howard', text, ts: Date.now()});
       } else if (relay.readyState === 1) {
         relay.send(JSON.stringify({type:'transcript_final', speaker:'Howard', text}));
       }
     }
   };
-} catch (e) { /* not inside a Recall bot — relay /simulate drives tests */ }
+} catch (e) { /* not inside a Recall bot — local tests drive the WS mode */ }
 
-// ---- cloud mailbox (Supabase) ----
-async function sbInsert(table, row) {
+// ---- GitHub mailbox ----
+function ghHeaders(extra) {
+  return Object.assign({Authorization: `Bearer ${PAT}`,
+                        Accept: 'application/vnd.github+json'}, extra || {});
+}
+function b64utf8(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  bytes.forEach(b => bin += String.fromCharCode(b));
+  return btoa(bin);
+}
+function b64bytes(buf) {
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+async function ghPut(path, base64Content, message) {
   try {
-    await fetch(`${SB_URL}/rest/v1/${table}`, {
-      method: 'POST',
-      headers: {apikey: SB_ANON, Authorization: `Bearer ${SB_ANON}`,
-                'Content-Type': 'application/json', Prefer: 'return=minimal'},
-      body: JSON.stringify(row),
+    await fetch(`${GH_API}/contents/${path}`, {
+      method: 'PUT', headers: ghHeaders({'Content-Type': 'application/json'}),
+      body: JSON.stringify({message, content: base64Content, branch: BRANCH}),
     });
-  } catch (e) { /* transient; next utterance retries naturally */ }
+  } catch (e) { /* transient; the conversation carries on */ }
+}
+function ghPutJSON(path, obj) {
+  return ghPut(path, b64utf8(JSON.stringify(obj)), `mailbox ${path}`);
+}
+async function ghRaw(path) {
+  const r = await fetch(`${GH_API}/contents/${path}?ref=${BRANCH}`, {
+    headers: ghHeaders({Accept: 'application/vnd.github.raw+json'})});
+  if (!r.ok) throw new Error('gh raw ' + r.status);
+  return r;
+}
+async function ghRawObjectURL(path) {
+  const r = await ghRaw(path);
+  const blob = await r.blob();
+  return URL.createObjectURL(blob);
 }
 
-if (sbMode) {
+if (ghMode) {
   setStatus('listening');
   face.className = 'listening';
-  let lastSpeechId = 0;
-  // Resume from the newest existing row so a page reload doesn't replay history.
-  fetch(`${SB_URL}/rest/v1/speeches?session_id=eq.${SESSION}&order=id.desc&limit=1`,
-        {headers: {apikey: SB_ANON, Authorization: `Bearer ${SB_ANON}`}})
-    .then(r => r.json())
-    .then(rows => { if (rows && rows[0]) lastSpeechId = rows[0].id; })
-    .catch(() => {});
+  let etag = null;
+  const seenSpeeches = new Set();
   setInterval(async () => {
     try {
-      const r = await fetch(
-        `${SB_URL}/rest/v1/speeches?session_id=eq.${SESSION}&id=gt.${lastSpeechId}&order=id.asc`,
-        {headers: {apikey: SB_ANON, Authorization: `Bearer ${SB_ANON}`}});
-      const rows = await r.json();
-      for (const row of rows || []) {
-        lastSpeechId = Math.max(lastSpeechId, row.id);
-        queue.push({seq: row.seq, kind: row.kind, text: row.text,
-                    audio_url: `${SB_URL}/storage/v1/object/public/audio/${row.audio_path}`});
+      const headers = ghHeaders();
+      if (etag) headers['If-None-Match'] = etag;
+      const r = await fetch(`${GH_API}/git/trees/${BRANCH}?recursive=1`, {headers});
+      if (r.status === 304) return;
+      if (!r.ok) return;
+      etag = r.headers.get('ETag');
+      const data = await r.json();
+      const prefix = `${SESS}/s/`;
+      const entries = (data.tree || [])
+        .filter(e => e.type === 'blob' && e.path.startsWith(prefix) && e.path.endsWith('.json'))
+        .sort((a, b) => a.path < b.path ? -1 : 1);
+      for (const e of entries) {
+        if (seenSpeeches.has(e.path)) continue;
+        seenSpeeches.add(e.path);
+        try {
+          const resp = await ghRaw(e.path);
+          const row = await resp.json();
+          queue.push({seq: row.seq, kind: row.kind, text: row.text,
+                      gh_audio_path: row.audio || null});
+        } catch (err) { /* skip a bad entry */ }
       }
-      if (rows && rows.length) playNext();
+      if (entries.length) playNext();
     } catch (e) { /* poll again next tick */ }
-  }, 700);
-  // Barge-in in sb mode: if the bot's transcript stream reports speech while
-  // we are playing, the Recall handler above already stops playback; also
-  // record the interruption so the brain knows.
-  setInterval(() => {
-    if (playing && window.__sbHeardSpeech) {
-      window.__sbHeardSpeech = false;
-      sbInsert('control', {session_id: SESSION, type: 'speaking_started',
-                           detail: currentText});
-      stopPlayback();
-    }
-  }, 300);
+  }, 1000);
 }
 </script>
 </body>
