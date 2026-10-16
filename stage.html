@@ -63,6 +63,7 @@ const queue = [];
 let playing = false;
 let currentAudio = null;
 let currentText = '';
+let currentItem = null;   // queue item actually playing (accounting)
 
 // Puppet state (stage v6) — declared early; the engine lives below the
 // face-state code. PUP.on stays false until every mandatory layer has
@@ -136,16 +137,40 @@ const pendingAudio = new Map();
 // receipt, which gives live sessions the playback spans tonight's
 // logs could not account for at all.
 window.__lashTrace = [];
-function lashTrace(ev, seq) {
+function lashTrace(ev, seq, extra) {
   try {
-    window.__lashTrace.push({ev, seq: (seq == null ? null : seq),
-      t: Math.round(performance.now() * 10) / 10, wall: Date.now()});
+    window.__lashTrace.push(Object.assign(
+      {ev, seq: (seq == null ? null : seq),
+       t: Math.round(performance.now() * 10) / 10, wall: Date.now()},
+      extra || {}));
     if (window.__lashTrace.length > 600) window.__lashTrace.shift();
   } catch (e) { /* tracing must never break the stage */ }
   if ((ev === 'play_start' || ev === 'play_end') && upCh) {
-    try { upCh.publish('control', {type: ev, seq: seq,
-      wall: Date.now()}); } catch (e) {}
+    // Playback accounting rides these notes (stage v9.3): play_end
+    // carries pos_ms/dur_ms (where playback stopped, from the audio
+    // element's own clock) and stopped=true when the line was CUT
+    // (barge-in/flush) rather than played out — the bridge splits
+    // the line into heard/unheard at exactly that position.
+    try { upCh.publish('control', Object.assign(
+      {type: ev, seq: seq, wall: Date.now()}, extra || {}));
+    } catch (e) {}
   }
+}
+// Emit a line's play_end exactly once, whichever way it ends.
+function emitPlayEnd(item, stopped) {
+  if (!item || item._playEndSent) return;
+  item._playEndSent = true;
+  let pos = null, dur = null;
+  if (currentAudio) {
+    try {
+      if (isFinite(currentAudio.currentTime))
+        pos = Math.round(currentAudio.currentTime * 1000);
+      if (isFinite(currentAudio.duration))
+        dur = Math.round(currentAudio.duration * 1000);
+    } catch (e) { /* no clock (text lane): position stays unknown */ }
+  }
+  lashTrace('play_end', item.seq,
+            {pos_ms: pos, dur_ms: dur, stopped: !!stopped});
 }
 // Filler queue guard: a queued, not-yet-playing filler must never sit
 // ahead of a substantive line (the consult's queueing finding — an
@@ -826,8 +851,9 @@ window.__lashPuppet = {
 async function playNext() {
   if (playing || queue.length === 0) return;
   const item = queue.shift();
-  lashTrace('play_start', item.seq);
+  lashTrace('play_start', item.seq, {pos_ms: 0});
   playing = true;
+  currentItem = item;
   currentText = item.text;
   captionEl.textContent = item.text;
   face.className = 'speaking';
@@ -876,8 +902,9 @@ async function playNext() {
   } catch (e) { donePlaying(item); }
 }
 function donePlaying(item) {
-  lashTrace('play_end', item.seq);
+  emitPlayEnd(item, false);
   playing = false;
+  currentItem = null;
   currentAudio = null;
   puppetLineEnd();
   face.className = 'listening';
@@ -888,6 +915,12 @@ function donePlaying(item) {
 }
 function stopPlayback() {
   queue.length = 0;
+  // Playback accounting: a cut line still gets its play_end — with
+  // stopped=true and the position where it died — BEFORE the audio
+  // element is torn down. A stop the bridge never hears about would
+  // leave the brain believing the whole line was said.
+  emitPlayEnd(currentItem, true);
+  currentItem = null;
   try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch {}
   if (currentAudio) { try { currentAudio.pause(); } catch {} currentAudio = null; }
   playing = false;
