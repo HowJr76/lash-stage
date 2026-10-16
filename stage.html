@@ -71,6 +71,17 @@ const PUP = {
 // failure before that leaves v6/v5 exactly as they were.
 const WORLD = { on: false };
 
+// Face ownership (stage v9, Howard 2026-10-15): the v5 animated loops —
+// the Muse-styled animated GIFs of Lash — OWN the medallion by default;
+// they are the avatar Howard likes best. The v6–v8 2D puppet is retired
+// by his decision and the v7 3D world is not selected. Both engines stay
+// in this file, intact and re-enableable (?fx=puppet / ?fx=world), but
+// in the default path neither may take the face over: the puppet loader
+// doesn't even fetch its layers, and the world module never builds.
+const FX = (qs.get('fx') || 'loops').toLowerCase();
+const LOOPS_MODE = FX !== 'puppet' && FX !== 'world';
+window.__LASH_LOOPS_MODE__ = LOOPS_MODE;
+
 function setStatus(s) { statusEl.textContent = s; }
 
 // Face media fallback: if the video can't load (e.g. local relay serving),
@@ -131,9 +142,14 @@ if (liveMode && window.Ably) {
       setStatus('listening (live)');
       face.className = 'listening';
       publishHello();
-      // Greeting: the playful standing portrait for the first seconds.
-      faceShow('make');
-      setTimeout(() => { if (faceState === 'make' && !playing) faceShow('idle'); }, 8000);
+      // Greeting (stage v9): the playful standing portrait owns the
+      // medallion only inside this bounded window after connect, and
+      // only until the first real event — an utterance, a thinking
+      // signal, or speech — supersedes it via faceRefresh(). The timer
+      // is a bound, never the driver.
+      greetingUntil = Date.now() + GREET_MS;
+      faceRefresh();
+      setTimeout(faceRefresh, GREET_MS + 60);
     });
     ably.connection.on('failed', () => setStatus('live wire failed'));
     downCh.subscribe('line', (m) => {
@@ -158,15 +174,30 @@ if (liveMode && window.Ably) {
                   rate: m.data.rate || 1.0, pitch: m.data.pitch ?? 1.0});
       playNext();
     });
-    // Face-state signals from the bridge (e.g. thinking while a reply is
-    // being composed). Never fight active speech; auto-revert to idle.
-    let thinkTimer = null;
+    // Face-state signals from the bridge (stage v9): 'thinking' is
+    // published the moment an utterance reaches the bridge and the
+    // brain starts composing; 'done' when the turn's lines have all
+    // shipped. The signals only move the state machine's flags — the
+    // visible loop is always resolved by faceRefresh(), so a thinking
+    // signal that lands mid-playback is remembered, not dropped, and
+    // takes the face the instant playback ends.
+    let thinkFailsafe = null;
     downCh.subscribe('face', (m) => {
-      if (!m.data || playing) return;
+      if (!m.data) return;
       if (m.data.state === 'thinking') {
-        faceShow('work');
-        clearTimeout(thinkTimer);
-        thinkTimer = setTimeout(() => { if (!playing) faceShow('idle'); }, 25000);
+        faceThinking = true;
+        greetingUntil = 0;
+        clearTimeout(thinkFailsafe);
+        // Failsafe only: if the brain dies mid-compose (it has), the
+        // work loop must not stare forever.
+        thinkFailsafe = setTimeout(() => {
+          faceThinking = false; faceRefresh();
+        }, 25000);
+        faceRefresh();
+      } else if (m.data.state === 'done' || m.data.state === 'listening') {
+        faceThinking = false;
+        clearTimeout(thinkFailsafe);
+        faceRefresh();
       }
     });
   } catch (e) { setStatus('live wire error'); }
@@ -182,6 +213,12 @@ let lastVoiceSig = '';
 // the local test harness could not see CDN/WebGL reality, so the stage
 // now reports it up the wire in every hello.
 function worldTelemetry() {
+  // Stage v9: in loops mode the world is not selected — say so plainly
+  // instead of leaving the bridge to log a forever-'pending' layer.
+  if (LOOPS_MODE) return { state: 'loops', stage: 'loops', err: null,
+    webgl: false, gl: null, glKind: null, three: 'skipped',
+    model: 'skipped', bones: 0, frames: 0, hidden: document.hidden,
+    errors: [] };
   const d = window.__lashWorldDiag;
   if (!d) return { state: 'absent' };
   return {
@@ -265,6 +302,28 @@ relay.onmessage = (ev) => {
 //   make  = standing, playful (greeting on arrival)
 const FACE_VIDS = { idle: 'faceVideo', talk: 'faceTalk', work: 'faceWork', make: 'faceMake' };
 let faceState = 'idle';
+// Intentional state machine (stage v9): the visible loop is RESOLVED
+// from real signals at every event, never advanced by timers —
+//   TALKING   exactly while a speech line is playing (the playNext span)
+//   THINKING  while the bridge says the brain is composing (its 'face'
+//             thinking signal, published at utterance receipt; 'done'
+//             clears it when the turn's lines have all shipped)
+//   GREETING  only inside the bounded post-connect window, and only
+//             until the first real event supersedes it
+//   LISTENING at all other times
+// Priority: talk > thinking > greeting > idle. Timers exist only as
+// bounds and failsafes (greeting expiry, a stuck-thinking failsafe),
+// never as the thing that moves the face.
+let faceThinking = false;
+let greetingUntil = 0;
+const GREET_MS = 6000;
+function faceResolve() {
+  if (playing) return 'talk';
+  if (faceThinking) return 'work';
+  if (Date.now() < greetingUntil) return 'make';
+  return 'idle';
+}
+function faceRefresh() { faceShow(faceResolve()); }
 function faceShow(name) {
   try {
     if (!FACE_VIDS[name]) name = 'idle';
@@ -279,7 +338,13 @@ function faceShow(name) {
     }
   } catch (e) { /* medallion keeps whatever portrait it has */ }
 }
-function faceTalk(on) { faceShow(on ? 'talk' : 'idle'); }
+function faceTalk(on) {
+  // Playback boundary (playNext / donePlaying / stopPlayback): the
+  // talking loop is exactly the playback span. On end, re-resolve —
+  // thinking may already be up for the next turn, and it takes the
+  // face the instant speech stops instead of dropping to idle.
+  faceRefresh();
+}
 
 // ---- puppet engine (stage v6) ----
 // A hand-rolled 2D photo-puppet of Lash on a canvas inside the medallion:
@@ -426,6 +491,10 @@ function puppetEnable() {
   requestAnimationFrame(puppetFrame);
 }
 (function puppetLoad() {
+  // Stage v9: in the default (loops) path the retired puppet never
+  // loads — its layers aren't even fetched, so it can never take the
+  // medallion over from the animated loops. ?fx=puppet restores it.
+  if (LOOPS_MODE) return;
   const files = PUPSET.files;
   const need = PUPSET.need;
   if (PUPSET.hideVidsEarly) {
@@ -559,6 +628,20 @@ function puppetFrame(ts) {
     ctx.restore();
   } catch (e) { /* a bad frame must never kill the stage */ }
 }
+// Debug/test handle for the face state machine (stage v9): the loops
+// harness reads the resolved state and which video is actually shown.
+window.__lashFace = {
+  state: () => faceState,
+  thinking: () => faceThinking,
+  mode: () => (LOOPS_MODE ? 'loops' : FX),
+  visible: () => {
+    for (const [k, id] of Object.entries(FACE_VIDS)) {
+      const el = document.getElementById(id);
+      if (el && el.style.display !== 'none') return k;
+    }
+    return null;
+  },
+};
 // Debug/test handle (local harness drives the puppet through this).
 window.__lashPuppet = {
   pup: PUP,
@@ -672,6 +755,7 @@ try {
     const isFinal = tr.is_final !== false;
     if (isFinal && text !== lastSent) {
       lastSent = text;
+      greetingUntil = 0;   // a real utterance ends any greeting window
       heardEl.textContent = 'Howard: ' + text;
       if (liveMode && upCh) {
         upCh.publish('utterance', {speaker: 'Howard', text, ts: Date.now()});
@@ -815,6 +899,17 @@ function worldFail(stage, err) {
 }
 
 (async () => {
+  // Stage v9: the loops own the medallion by default — the world is
+  // not selected, so it never probes WebGL, never fetches three.js or
+  // the model, and can never take the face over. ?fx=world restores
+  // the full v7 build path below, untouched.
+  if (window.__LASH_LOOPS_MODE__) {
+    WDIAG.stage = 'loops';
+    WDIAG.threeImport = 'skipped';
+    WDIAG.modelFetch = 'skipped';
+    worldNotify();
+    return;
+  }
   let THREE, GLTFLoader;
   try {
     const probe = document.createElement('canvas');
