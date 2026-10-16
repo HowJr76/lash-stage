@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Home Room — Lash</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161c26; --panel2:#1d2635; --line:#2a3648;
+    --ink:#e8eef6; --dim:#93a3b8; --faint:#5d6f86;
+    --accent:#ffb454; --accent-ink:#23180a;
+    --ok:#3fb97c; --warn:#e5b83b; --bad:#e5604f;
+    --bubble-lash:#1d2635; --bubble-me:#2c4a73;
+    --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display:flex; flex-direction:column; height:100dvh; overflow:hidden;
+  }
+  /* ---------- presence card ---------- */
+  header{
+    display:flex; align-items:center; gap:14px;
+    padding:calc(10px + var(--sat)) 16px 10px;
+    background:var(--panel); border-bottom:1px solid var(--line);
+    flex:0 0 auto;
+  }
+  #medallion{
+    position:relative; width:76px; height:76px; border-radius:50%;
+    overflow:hidden; flex:0 0 auto; background:#000;
+    border:2px solid var(--line);
+  }
+  #medallion video, #medallion img{
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    opacity:0; transition:opacity 200ms linear;
+  }
+  #medallion img{opacity:1}
+  #medallion.away video{opacity:0 !important}
+  #medallion.away img{filter:grayscale(.7) brightness(.55)}
+  #presenceCol{min-width:0; flex:1 1 auto}
+  #whoRow{display:flex; align-items:center; gap:9px; flex-wrap:wrap}
+  #whoName{font-size:21px; font-weight:700; letter-spacing:.2px}
+  #presencePill{
+    font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.8px;
+    padding:3px 9px; border-radius:999px; border:1px solid var(--line); color:var(--dim);
+  }
+  #presencePill[data-p="available"]{color:var(--ok); border-color:var(--ok)}
+  #presencePill[data-p="listening"]{color:#58b6e6; border-color:#58b6e6}
+  #presencePill[data-p="thinking"]{color:var(--warn); border-color:var(--warn)}
+  #presencePill[data-p="speaking"]{color:var(--accent); border-color:var(--accent)}
+  #presencePill[data-p="away"]{color:var(--faint)}
+  #statusLine{color:var(--dim); font-size:13.5px; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  #connRow{display:flex; align-items:center; gap:6px; color:var(--faint); font-size:12px; margin-top:2px}
+  #connDot{width:8px; height:8px; border-radius:50%; background:var(--faint); flex:0 0 auto}
+  #connDot.on{background:var(--ok)}
+  #connDot.err{background:var(--bad)}
+  /* ---------- thread ---------- */
+  main{flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px 12px 8px}
+  .msg{max-width:86%; padding:9px 12px; border-radius:16px; margin:0 0 9px; clear:both; word-wrap:break-word; overflow-wrap:anywhere}
+  .msg .meta{display:block; font-size:11px; color:var(--faint); margin-top:5px}
+  .msg.lash{background:var(--bubble-lash); float:left; border-bottom-left-radius:5px}
+  .msg.me{background:var(--bubble-me); float:right; border-bottom-right-radius:5px}
+  .msg .clause-unheard{opacity:.45; text-decoration:line-through}
+  .chip{
+    display:inline-block; font-size:11px; font-weight:600; color:var(--warn);
+    border:1px solid var(--warn); border-radius:999px; padding:1px 8px; margin-top:6px;
+  }
+  .sys{
+    clear:both; text-align:center; color:var(--faint); font-size:12.5px; margin:12px 8px;
+  }
+  .sys.divider{border-top:1px solid var(--line); padding-top:10px}
+  #threadEmpty{color:var(--faint); text-align:center; margin-top:26px; font-size:14px; padding:0 30px}
+  /* ---------- composer ---------- */
+  #composer{
+    display:none; gap:8px; padding:10px 12px; background:var(--panel);
+    border-top:1px solid var(--line); flex:0 0 auto;
+  }
+  #composer.open{display:flex}
+  #typeInput{
+    flex:1 1 auto; min-height:48px; max-height:110px; resize:none;
+    background:var(--panel2); color:var(--ink); border:1px solid var(--line);
+    border-radius:12px; padding:12px; font:inherit; font-size:16px;
+  }
+  #sendBtn{
+    flex:0 0 auto; min-width:74px; border:0; border-radius:12px;
+    background:var(--accent); color:var(--accent-ink); font-weight:700; font-size:16px;
+  }
+  /* ---------- controls ---------- */
+  #controls{
+    flex:0 0 auto; background:var(--panel); border-top:1px solid var(--line);
+    padding:10px 12px calc(10px + var(--sab));
+  }
+  #levelWrap{display:flex; align-items:center; gap:9px; margin:0 2px 10px; color:var(--faint); font-size:11.5px}
+  #levelTrack{flex:1 1 auto; height:8px; background:var(--panel2); border-radius:99px; overflow:hidden}
+  #levelFill{height:100%; width:0%; background:linear-gradient(90deg,#3fb97c,#e5b83b,#e5604f); transition:width 60ms linear}
+  #btnRow{display:flex; gap:9px}
+  .ctl{
+    flex:1 1 0; min-height:60px; border-radius:14px; border:1px solid var(--line);
+    background:var(--panel2); color:var(--ink); font-size:16.5px; font-weight:650;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;
+    cursor:pointer; touch-action:manipulation; user-select:none; -webkit-user-select:none;
+  }
+  .ctl small{font-size:11px; color:var(--dim); font-weight:500}
+  .ctl:disabled{opacity:.38}
+  .ctl.primary{background:var(--accent); color:var(--accent-ink); border-color:var(--accent); flex:1.35 1 0}
+  .ctl.primary small{color:#5c4318}
+  .ctl.live{background:var(--ok); border-color:var(--ok); color:#07251a}
+  .ctl.live small{color:#0b4630}
+  .ctl.danger{color:#ff9c8f}
+  .ctl.on{border-color:var(--accent); color:var(--accent)}
+  /* ---------- connect sheet ---------- */
+  #sheet{
+    position:fixed; inset:0; background:rgba(4,7,11,.72); display:none;
+    align-items:flex-end; justify-content:center; z-index:40;
+  }
+  #sheet.open{display:flex}
+  #sheetCard{
+    background:var(--panel); width:100%; max-width:560px; border-radius:18px 18px 0 0;
+    padding:18px 16px calc(16px + var(--sab)); border-top:1px solid var(--line);
+    max-height:88dvh; overflow-y:auto;
+  }
+  #sheetCard h2{margin:2px 0 4px; font-size:18px}
+  #sheetCard p{color:var(--dim); font-size:13.5px; margin:4px 0 12px}
+  #sheetCard label{display:block; font-size:12.5px; color:var(--dim); margin:12px 0 5px; font-weight:600}
+  #sheetCard input{
+    width:100%; min-height:48px; background:var(--panel2); color:var(--ink);
+    border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:15px;
+  }
+  #sheetBtns{display:flex; gap:9px; margin-top:16px}
+  #sheetBtns button{flex:1 1 0; min-height:52px; border-radius:12px; font-size:16px; font-weight:650; border:1px solid var(--line); background:var(--panel2); color:var(--ink)}
+  #sheetBtns #sheetGo{background:var(--accent); color:var(--accent-ink); border-color:var(--accent)}
+  #sheetErr{color:var(--bad); font-size:13.5px; min-height:18px; margin-top:10px}
+  /* ---------- sim panel ---------- */
+  #simPanel{
+    display:none; flex:0 0 auto; background:#131a12; border-top:1px solid #2c4423;
+    padding:9px 12px; max-height:38dvh; overflow-y:auto;
+  }
+  #simPanel.open{display:block}
+  #simPanel h3{margin:2px 0 7px; font-size:12.5px; color:#9fd08a; text-transform:uppercase; letter-spacing:.7px}
+  #simPanel .row{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:7px}
+  #simPanel button{
+    background:#22331c; color:#cfe8c2; border:1px solid #3a5a2e; border-radius:9px;
+    padding:8px 11px; font-size:13px; min-height:40px;
+  }
+  #simLog{font:11px/1.5 ui-monospace, Menlo, monospace; color:#8fae80; white-space:pre-wrap; word-break:break-all; max-height:110px; overflow-y:auto}
+  @media (min-width:560px){
+    #medallion{width:92px; height:92px}
+    .msg{max-width:72%}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div id="medallion" class="away">
+    <img id="facePoster" src="assets/lash-face.jpg" alt="Lash">
+    <video id="faceIdle" src="assets/lash-face.mp4" poster="assets/lash-face.jpg" muted loop playsinline preload="auto"></video>
+    <video id="faceTalk" src="assets/lash-talk.mp4" muted loop playsinline preload="auto"></video>
+    <video id="faceWork" src="assets/lash-work.mp4" muted loop playsinline preload="auto"></video>
+    <video id="faceMake" src="assets/lash-make.mp4" muted loop playsinline preload="auto"></video>
+  </div>
+  <div id="presenceCol">
+    <div id="whoRow"><span id="whoName">Lash</span><span id="presencePill" data-p="away">Away</span></div>
+    <div id="statusLine">Not connected yet — tap Talk when you're ready.</div>
+    <div id="connRow"><span id="connDot"></span><span id="connText">no server connection</span></div>
+  </div>
+</header>
+
+<main id="threadWrap"><div id="thread"></div><div id="threadEmpty">Voice and typed text live in this one thread.<br>What Lash says, what you say, and what got cut off — all here.</div></main>
+
+<div id="composer">
+  <textarea id="typeInput" rows="1" placeholder="Type instead — same conversation…" enterkeyhint="send"></textarea>
+  <button id="sendBtn" type="button">Send</button>
+</div>
+
+<div id="controls">
+  <div id="levelWrap"><span>MIC</span><div id="levelTrack"><div id="levelFill"></div></div><span id="levelState">off</span></div>
+  <div id="btnRow">
+    <button class="ctl primary" id="talkBtn" type="button">Talk<small>join the room</small></button>
+    <button class="ctl" id="muteBtn" type="button" disabled>Mute<small>mic on</small></button>
+    <button class="ctl" id="typeBtn" type="button">Type<small>instead</small></button>
+    <button class="ctl danger" id="endBtn" type="button" disabled>End<small>hang up</small></button>
+  </div>
+</div>
+
+<div id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+  <div id="sheetCard">
+    <h2 id="sheetTitle">Connect to the Home Room</h2>
+    <p>Point the app at our LiveKit server, and at the token service that issues your identity-bound token. Both addresses are remembered on this device only.</p>
+    <label for="inUrl">LiveKit server URL</label>
+    <input id="inUrl" type="url" inputmode="url" autocomplete="off" placeholder="wss://room.example — our server">
+    <label for="inTs">Token service URL</label>
+    <input id="inTs" type="url" inputmode="url" autocomplete="off" placeholder="http://127.0.0.1:8792 — dev token service">
+    <label for="inToken">…or paste a token directly</label>
+    <input id="inToken" type="text" autocomplete="off" placeholder="optional — overrides token service">
+    <div id="sheetErr"></div>
+    <div id="sheetBtns">
+      <button id="sheetCancel" type="button">Cancel</button>
+      <button id="sheetGo" type="button">Connect</button>
+    </div>
+  </div>
+</div>
+
+<div id="simPanel">
+  <h3>Simulated data channel — demo driver (no server)</h3>
+  <div class="row">
+    <button data-sim="agentJoin" type="button">Lash joins</button>
+    <button data-sim="howardSpeaks" type="button">Howard speaks</button>
+    <button data-sim="lashThinks" type="button">Lash thinking</button>
+    <button data-sim="lashSpeaks" type="button">Lash speaks</button>
+    <button data-sim="bargeIn" type="button">Barge-in (cut off)</button>
+    <button data-sim="lashFinishes" type="button">Lash finishes line</button>
+    <button data-sim="agentAway" type="button">Lash away</button>
+    <button data-sim="auto" type="button">▶ Auto-cycle</button>
+  </div>
+  <div id="simLog"></div>
+</div>
+
+<audio id="remoteAudio" autoplay playsinline style="display:none"></audio>
+
+<script type="module" src="app.js"></script>
+<script type="module" src="sim.js"></script>
+</body>
+</html>
