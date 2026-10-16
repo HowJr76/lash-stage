@@ -118,6 +118,42 @@ const liveMode = !!LIVE_KEY;
 let upCh = null, downCh = null;
 const pendingLines = new Map();
 const pendingAudio = new Map();
+
+// ---- latency trace (2026-10-15 latency rescue; log-only) ----
+// In-page event stamps: window.__lashTrace collects
+// {ev, seq, t (performance.now ms), wall (Date.now epoch ms)} so the
+// harness and trace_report.py can size the stage spans (publish ->
+// queued -> play_start -> play_end). play_start/play_end are also
+// published up the wire as control notes — the bridge logs their
+// receipt, which gives live sessions the playback spans tonight's
+// logs could not account for at all.
+window.__lashTrace = [];
+function lashTrace(ev, seq) {
+  try {
+    window.__lashTrace.push({ev, seq: (seq == null ? null : seq),
+      t: Math.round(performance.now() * 10) / 10, wall: Date.now()});
+    if (window.__lashTrace.length > 600) window.__lashTrace.shift();
+  } catch (e) { /* tracing must never break the stage */ }
+  if ((ev === 'play_start' || ev === 'play_end') && upCh) {
+    try { upCh.publish('control', {type: ev, seq: seq,
+      wall: Date.now()}); } catch (e) {}
+  }
+}
+// Filler queue guard: a queued, not-yet-playing filler must never sit
+// ahead of a substantive line (the consult's queueing finding — an
+// acknowledgment occupying the playback queue delays the real answer
+// behind it). When substance arrives, queued fillers are preempted.
+// Disable with ?fqguard=0.
+const FQ_GUARD = qs.get('fqguard') !== '0';
+function preemptQueuedFillers() {
+  if (!FQ_GUARD) return;
+  for (let i = queue.length - 1; i >= 0; i--) {
+    if (queue[i].filler) {
+      lashTrace('filler_preempted', queue[i].seq);
+      queue.splice(i, 1);
+    }
+  }
+}
 function pairSpeech(seq) {
   const line = pendingLines.get(seq);
   if (!line) return;
@@ -128,9 +164,11 @@ function pairSpeech(seq) {
   if (!url && !line.gh_audio_path) return;
   pendingLines.delete(seq);
   pendingAudio.delete(seq);
+  if (!line.filler) preemptQueuedFillers();
   queue.push({seq, text: line.text, audio_url: url || null,
               gh_audio_path: line.gh_audio_path || null,
-              env: line.env || null});
+              env: line.env || null, filler: !!line.filler});
+  lashTrace('queued', seq);
   playNext();
 }
 if (liveMode && window.Ably) {
@@ -153,6 +191,7 @@ if (liveMode && window.Ably) {
     });
     ably.connection.on('failed', () => setStatus('live wire failed'));
     downCh.subscribe('line', (m) => {
+      lashTrace('line_recv', m.data.seq);
       pendingLines.set(m.data.seq, m.data);
       setTimeout(() => pendingLines.delete(m.data.seq), 8000);
       pairSpeech(m.data.seq);
@@ -161,17 +200,21 @@ if (liveMode && window.Ably) {
       try {
         const buf = m.data;
         const seq = new DataView(buf).getUint32(0);
+        lashTrace('audio_recv', seq);
         const blob = new Blob([buf.slice(4)], {type: 'audio/mpeg'});
         pendingAudio.set(seq, URL.createObjectURL(blob));
         setTimeout(() => pendingAudio.delete(seq), 8000);
         pairSpeech(seq);
       } catch (e) { /* bad frame — skip */ }
     });
-    downCh.subscribe('flush', () => stopPlayback());
+    downCh.subscribe('flush', () => { lashTrace('flush_recv'); stopPlayback(); });
     downCh.subscribe('say_text', (m) => {
+      if (!m.data.filler) preemptQueuedFillers();
       queue.push({seq: m.data.seq, kind: 'text', text: m.data.text,
                   voiceName: m.data.voiceName || null,
-                  rate: m.data.rate || 1.0, pitch: m.data.pitch ?? 1.0});
+                  rate: m.data.rate || 1.0, pitch: m.data.pitch ?? 1.0,
+                  filler: !!m.data.filler});
+      lashTrace('queued', m.data.seq);
       playNext();
     });
     // Face-state signals from the bridge (stage v9): 'thinking' is
@@ -656,6 +699,7 @@ window.__lashPuppet = {
 async function playNext() {
   if (playing || queue.length === 0) return;
   const item = queue.shift();
+  lashTrace('play_start', item.seq);
   playing = true;
   currentText = item.text;
   captionEl.textContent = item.text;
@@ -705,6 +749,7 @@ async function playNext() {
   } catch (e) { donePlaying(item); }
 }
 function donePlaying(item) {
+  lashTrace('play_end', item.seq);
   playing = false;
   currentAudio = null;
   puppetLineEnd();
