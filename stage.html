@@ -23,6 +23,14 @@
     overflow:hidden; }
   #face video { width:100%; height:100%; object-fit:cover; display:block; }
   #face canvas { width:100%; height:100%; display:block; }
+  /* Loops readability (stage v9.2, Fix Round 2): in loops mode the
+     four state clips STACK and crossfade (opacity) instead of
+     hard-cutting. Gated on the data attribute — set only in loops
+     mode — so puppet/world paths, which share these elements and
+     the #face className, keep their original rendering untouched. */
+  #face[data-loops="1"] { position:relative; }
+  #face[data-loops="1"] video { position:absolute; inset:0; opacity:0;
+    transition: opacity .2s ease-in-out; }
   #face.speaking { box-shadow: 0 0 0 10px rgba(90,180,255,.25), 0 0 60px rgba(90,180,255,.35);
     animation: talkbob .9s ease-in-out infinite; }
   @keyframes talkbob { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
@@ -345,6 +353,43 @@ relay.onmessage = (ev) => {
 //   make  = standing, playful (greeting on arrival)
 const FACE_VIDS = { idle: 'faceVideo', talk: 'faceTalk', work: 'faceWork', make: 'faceMake' };
 let faceState = 'idle';
+// Loops readability (stage v9.2, Fix Round 2 — Howard in-room during
+// the v9 test: the state loops "wasn't supposed to be random"). The
+// v9 state machine resolved correctly (telemetry proved it), but the
+// SWITCHING read as random to the eye: hard cuts, every entry joining
+// its clip mid-loop at an arbitrary frame, no minimum dwell. Three
+// mechanical fixes, loops mode only:
+//   ENTRY IN-POINTS — a state starts its clip at a defined in-point
+//     (FACE_SPAN), the same frame every time, so each state's opening
+//     gesture becomes recognizable.
+//   CROSSFADE — 200 ms opacity blend instead of a hard cut.
+//   MINIMUM HOLD — a non-preempting state must dwell 1.6 s before it
+//     can be replaced, so brief signals can't flicker the face.
+//     TALKING preempts instantly in both directions (it must track
+//     playback exactly); THINKING preempts idle/greeting instantly.
+// FACE_SPAN in/out points come from a per-clip motion audit
+// (2026-10-16; mean abs frame-diff per 0.5 s bucket):
+//   idle: calm (<=0.52) EXCEPT a distinct movement burst at
+//     1.5-2.5 s (1.12) and a rise at 7.5-8.0 s — in the old full-loop
+//     usage the LISTENING face made a big unexplained move every
+//     8 s, a concrete contributor to the "random" read. The loop
+//     window is set to the calm 2.5-7.5 s segment.
+//   talk: near-still 0-2.0 s, speech motion 2.0-5.0 s — entry at
+//     2.0 s puts the talking motion under the audio from frame one.
+//   work: busy throughout except a still first 0.5 s — entry at
+//     0.5 s so THINKING reads instantly.
+//   make: busy/playful throughout — full span.
+const FACE_SPAN = {
+  idle: { i: 2.5, o: 7.5 },
+  talk: { i: 2.0, o: 7.9 },
+  work: { i: 0.5, o: 7.9 },
+  make: { i: 0.0, o: 7.9 },
+};
+const FACE_FADE_MS = 200;
+const FACE_MIN_HOLD_MS = 1600;
+let faceVisible = 'idle';
+let faceShownAt = performance.now();
+let faceHoldTimer = null;
 // Intentional state machine (stage v9): the visible loop is RESOLVED
 // from real signals at every event, never advanced by timers —
 //   TALKING   exactly while a speech line is playing (the playNext span)
@@ -373,6 +418,7 @@ function faceShow(name) {
     faceState = name;
     if (WORLD.on) { worldSetState(name); return; }
     if (PUP.on) { puppetSetState(name); return; }
+    if (LOOPS_MODE) { faceShowLoops(name); return; }
     for (const [k, id] of Object.entries(FACE_VIDS)) {
       const el = document.getElementById(id);
       if (!el) continue;
@@ -380,6 +426,80 @@ function faceShow(name) {
       else { el.style.display = 'none'; try { el.pause(); } catch (e) {} }
     }
   } catch (e) { /* medallion keeps whatever portrait it has */ }
+}
+// Loops-mode switching (stage v9.2): crossfade at defined in-points
+// with a minimum hold — see the FACE_SPAN block for the why.
+function faceShowLoops(name) {
+  if (name === faceVisible) {
+    if (faceHoldTimer) { clearTimeout(faceHoldTimer); faceHoldTimer = null; }
+    return;
+  }
+  const now = performance.now();
+  const cur = faceVisible;
+  // Preemption: talking enters/leaves with playback exactly; thinking
+  // takes the face from idle/greeting without waiting out a hold.
+  const preempt = !cur || name === 'talk' || cur === 'talk'
+    || name === 'work';
+  if (!preempt && now - faceShownAt < FACE_MIN_HOLD_MS) {
+    if (!faceHoldTimer) {
+      faceHoldTimer = setTimeout(() => {
+        faceHoldTimer = null;
+        try { faceShow(faceResolve()); } catch (e) {}
+      }, FACE_MIN_HOLD_MS - (now - faceShownAt) + 20);
+    }
+    return;
+  }
+  if (faceHoldTimer) { clearTimeout(faceHoldTimer); faceHoldTimer = null; }
+  const inEl = document.getElementById(FACE_VIDS[name]);
+  if (!inEl) return;
+  const outEl = cur ? document.getElementById(FACE_VIDS[cur]) : null;
+  faceVisible = name;
+  faceShownAt = now;
+  if (inEl._fadeT) { clearTimeout(inEl._fadeT); inEl._fadeT = null; }
+  try { inEl.currentTime = FACE_SPAN[name].i; } catch (e) {}
+  inEl.style.display = 'block';
+  inEl.dataset.shown = '1';
+  void inEl.offsetWidth;  // reflow: the fade must run from opacity 0
+  inEl.style.opacity = '1';
+  const p = inEl.play(); if (p && p.catch) p.catch(() => {});
+  if (outEl && outEl !== inEl) {
+    delete outEl.dataset.shown;
+    outEl.style.opacity = '0';
+    if (outEl._fadeT) clearTimeout(outEl._fadeT);
+    outEl._fadeT = setTimeout(() => {
+      if (outEl.dataset.shown !== '1') {
+        outEl.style.display = 'none';
+        try { outEl.pause(); } catch (e) {}
+      }
+    }, FACE_FADE_MS + 60);
+  }
+}
+// Loops init (stage v9.2): mark the medallion for the stacked CSS,
+// show the idle clip at full opacity inside its calm window, and
+// window every clip to its FACE_SPAN while it is the visible one.
+if (LOOPS_MODE) {
+  try {
+    face.dataset.loops = '1';
+    const idleEl = document.getElementById(FACE_VIDS.idle);
+    if (idleEl) {
+      idleEl.dataset.shown = '1';
+      idleEl.style.opacity = '1';
+      const jump = () => { try { idleEl.currentTime = FACE_SPAN.idle.i; } catch (e) {} };
+      if (idleEl.readyState >= 1) jump();
+      else idleEl.addEventListener('loadedmetadata', jump, { once: true });
+    }
+    for (const [k, id] of Object.entries(FACE_VIDS)) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.addEventListener('timeupdate', () => {
+        if (faceVisible !== k) return;
+        const sp = FACE_SPAN[k];
+        if (el.currentTime >= sp.o || el.currentTime < sp.i - 0.05) {
+          try { el.currentTime = sp.i; } catch (e) {}
+        }
+      });
+    }
+  } catch (e) { /* non-fatal: hard-switch rendering still works */ }
 }
 function faceTalk(on) {
   // Playback boundary (playNext / donePlaying / stopPlayback): the
@@ -678,6 +798,13 @@ window.__lashFace = {
   thinking: () => faceThinking,
   mode: () => (LOOPS_MODE ? 'loops' : FX),
   visible: () => {
+    // Loops mode (v9.2): the shown clip is the one holding
+    // dataset.shown through the crossfade; fall back to the display
+    // check (puppet/world paths never set it).
+    for (const [k, id] of Object.entries(FACE_VIDS)) {
+      const el = document.getElementById(id);
+      if (el && el.dataset && el.dataset.shown === '1') return k;
+    }
     for (const [k, id] of Object.entries(FACE_VIDS)) {
       const el = document.getElementById(id);
       if (el && el.style.display !== 'none') return k;
