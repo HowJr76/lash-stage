@@ -297,18 +297,58 @@ function faceTalk(on) { faceShow(on ? 'talk' : 'idle'); }
 // envelope (text lane, relay-WS and GitHub transports) get a synthesized
 // envelope from the text: one decaying pulse per syllable.
 //
-// Geometry constants mirror puppet/manifest2.json (stage v8 layers:
-// frame = the 1000x1000 region at source (318,20) of the approved
-// front-facing portrait lash-portrait-v2.png, resampled x0.9 onto the
-// 900x900 canvas — see puppet/cut_layers_v2.py).
-const PUP_EAR = {
-  L: {dx: 123, dy: 4, px: 258, py: 338, img: 'earL', dir: -1},
-  R: {dx: 474, dy: 0, px: 625, py: 322, img: 'earR', dir: 1},
+// Face sets (stage v8.2): the SAME engine drives either face; the
+// ?face= query param selects the set and the dog is the default —
+// no param (every existing summon) renders exactly the v8.1 dog.
+// The human set is Howard's swap test (directed in-call 2026-10-15):
+// one driver, two mouths — if the human mouth opens on this pipeline
+// and the dog's reads as motion-without-opening, the muzzle is the
+// limit; if the human stays shut too, the driver is. Geometry mirrors
+// puppet/manifest2.json (dog: frame = the 1000x1000 region at source
+// (318,20) of lash-portrait-v2.png, resampled x0.9 — cut_layers_v2.py)
+// and puppet/manifest3.json (human: Howard's profile photo, the
+// 108x108 region at source (42,17) resampled x8.333 —
+// cut_layers_human.py; landmarks grid-verified on the 900px base).
+const PUP_SETS = {
+  dog: {
+    files: {base: 'puppet2-base.webp', earL: 'puppet2-ear-l.webp',
+            earR: 'puppet2-ear-r.webp', blinkL: 'puppet2-blink-l.webp',
+            blinkR: 'puppet2-blink-r.webp'},
+    need: ['base', 'earL', 'earR'],
+    ear: {
+      L: {dx: 123, dy: 4, px: 258, py: 338, img: 'earL', dir: -1},
+      R: {dx: 474, dy: 0, px: 625, py: 322, img: 'earR', dir: 1},
+    },
+    warp: {x: 215, y: 608, w: 490, h: 282, peakY: 842,
+           mx: 460, my: 655, travel: 36, step: 9, ramp: 1.5,
+           shadowR: 95, shadowGrow: 21, shadowA: 0.60},
+    pivot: [460, 852],
+    blink: {L: [272, 324], R: [516, 311]},
+  },
+  human: {
+    files: {base: 'puppet3-base.webp', blinkL: 'puppet3-blink-l.webp',
+            blinkR: 'puppet3-blink-r.webp'},
+    need: ['base'],
+    // No ear layers: the frame loop skips images that never loaded,
+    // so the ear springs run with nothing to swing (cleanly inert);
+    // breathing sway, thinking tilt, jaw nod and blinks all still run.
+    ear: {
+      L: {dx: 0, dy: 0, px: 0, py: 0, img: 'earL', dir: -1},
+      R: {dx: 0, dy: 0, px: 0, py: 0, img: 'earR', dir: 1},
+    },
+    warp: {x: 380, y: 715, w: 285, h: 180, peakY: 825,
+           mx: 520, my: 754, travel: 44, step: 6, overlap: 9, ramp: 1.8,
+           shadowR: 92, shadowGrow: 36, shadowA: 0.80},
+    pivot: [535, 880],
+    blink: {L: [308, 433], R: [533, 433]},
+    hideVidsEarly: true,
+  },
 };
-const PUP_WARP = {x: 215, y: 608, w: 490, h: 282, peakY: 842,
-                  mx: 460, my: 655, travel: 36, step: 9};
-const PUP_PIVOT = [460, 852];
-const PUP_BLINK = {L: [272, 324], R: [516, 311]};
+const PUPSET = PUP_SETS[qs.get('face')] || PUP_SETS.dog;
+const PUP_EAR = PUPSET.ear;
+const PUP_WARP = PUPSET.warp;
+const PUP_PIVOT = PUPSET.pivot;
+const PUP_BLINK = PUPSET.blink;
 
 function puppetSetState(name) {
   if (name === 'make') PUP.bounceT0 = performance.now();
@@ -386,10 +426,16 @@ function puppetEnable() {
   requestAnimationFrame(puppetFrame);
 }
 (function puppetLoad() {
-  const files = {base: 'puppet2-base.webp', earL: 'puppet2-ear-l.webp',
-                 earR: 'puppet2-ear-r.webp', blinkL: 'puppet2-blink-l.webp',
-                 blinkR: 'puppet2-blink-r.webp'};
-  const need = ['base', 'earL', 'earR'];
+  const files = PUPSET.files;
+  const need = PUPSET.need;
+  if (PUPSET.hideVidsEarly) {
+    // Swap-test face: never flash the dog medallion videos while the
+    // human layers load — the white #face backing shows for a beat.
+    for (const id of Object.values(FACE_VIDS)) {
+      const el = document.getElementById(id);
+      if (el) { el.style.display = 'none'; try { el.pause(); } catch (e) {} }
+    }
+  }
   let ok = 0, dead = false;
   for (const [k, f] of Object.entries(files)) {
     const im = new Image();
@@ -409,7 +455,7 @@ function pupProfile(y) {
   // must arrive AT the mouth band, not only deep in the beard — with
   // the old linear ramp the mouth line itself moved ~2px at full jaw
   // and the motion was invisible at Meet tile sizes (harness-measured).
-  if (y <= W.peakY) { const t = Math.min(1, (y - W.y) / (W.peakY - W.y) * 1.5); return t * t * (3 - 2 * t); }
+  if (y <= W.peakY) { const t = Math.min(1, (y - W.y) / (W.peakY - W.y) * (W.ramp || 1.5)); return t * t * (3 - 2 * t); }
   return Math.max(0.45, 1 - 0.55 * (y - W.peakY) / (W.y + W.h - W.peakY));
 }
 
@@ -473,21 +519,22 @@ function puppetFrame(ts) {
       for (let y0 = W.y; y0 < W.y + W.h; y0 += W.step) {
         const off = pupProfile(y0 + W.step / 2) * W.travel * PUP.jaw;
         if (off < 0.2) continue;
-        ctx.drawImage(base, W.x, y0, W.w, W.step + 6,
-                      W.x, y0 + off, W.w, W.step + 6);
+        ctx.drawImage(base, W.x, y0, W.w, W.step + (W.overlap || 6),
+                      W.x, y0 + off, W.w, W.step + (W.overlap || 6));
       }
       // soft mouth shadow that grows as the jaw opens — deepened
       // (2026-10-15): at alpha 0.34 it measured +1.8 luminance against
       // the closed mouth, i.e. no visible oral cavity at all.
-      const g = ctx.createRadialGradient(W.mx, W.my, 4, W.mx, W.my, 95);
-      g.addColorStop(0, `rgba(26,18,12,${0.60 * PUP.jaw})`);
+      const SR = W.shadowR || 95;
+      const g = ctx.createRadialGradient(W.mx, W.my, 4, W.mx, W.my, SR);
+      g.addColorStop(0, `rgba(26,18,12,${(W.shadowA || 0.60) * PUP.jaw})`);
       g.addColorStop(1, 'rgba(26,18,12,0)');
       ctx.save();
       ctx.translate(W.mx, W.my);
-      ctx.scale(1, (5 + 21 * PUP.jaw) / 95);
+      ctx.scale(1, (5 + (W.shadowGrow || 21) * PUP.jaw) / SR);
       ctx.translate(-W.mx, -W.my);
       ctx.fillStyle = g;
-      ctx.fillRect(W.mx - 95, W.my - 95, 190, 190);
+      ctx.fillRect(W.mx - SR, W.my - SR, 2 * SR, 2 * SR);
       ctx.restore();
     }
     for (const side of ['L', 'R']) {
