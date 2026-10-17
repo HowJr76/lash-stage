@@ -198,7 +198,14 @@ function pub(ch, name, data, label, quiet){
       (ably ? ably.connection.state : "not started"));
     return false;
   }
-  ch.publish(name, data);
+  /* Wire contract: the bridge parses every up/ctl payload with
+     json.loads on a STRING (its bench-proven shape). An Ably JS
+     object publish arrives at the Python bridge already decoded
+     to a dict, which json.loads rejects — silently: no pong, no
+     signal handling, no utter. Found live 2026-10-17 after the
+     auth fix landed (page connected; every PING vanished).
+     Always send strings. */
+  ch.publish(name, typeof data === "string" ? data : JSON.stringify(data));
   return true;
 }
 function ping(){
