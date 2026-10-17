@@ -4,7 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Muse in a Meeting · Moseley Innovations</title>
-<meta name="description" content="Muse in a Meeting — put your Muse in the meeting. A Moseley Innovations meeting room.">
+<meta name="description" content="Muse in a Meeting — put your Muse in the meeting. It joins your video call as a participant: speaking, answering, and following up live. A Moseley Innovations product.">
+<meta property="og:title" content="Muse in a Meeting">
+<meta property="og:description" content="Put your Muse in the meeting. Your Muse joins the call as a participant — speaking, answering, and following up live.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://howjr76.github.io/lash-stage/muse-in-a-meeting-og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://howjr76.github.io/lash-stage/muse-in-a-meeting-og.png">
+<link rel="icon" type="image/svg+xml" href="muse-in-a-meeting-icon.svg">
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; min-height: 100%; }
@@ -12,80 +19,116 @@
     font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     background: radial-gradient(1200px 700px at 50% -10%, #0d2c47 0%, #081c30 45%, #050f1c 100%);
     color: #e8eef2;
-    display: flex; align-items: center; justify-content: center;
-    padding: 24px 16px;
+    padding: 28px 18px 40px;
   }
-  .card {
-    width: 100%; max-width: 520px; text-align: center;
-    background: rgba(255,255,255,.03);
+  .wrap { max-width: 1020px; margin: 0 auto; }
+
+  /* House brand bar — Moseley Innovations is the maker */
+  .house {
+    display: flex; align-items: center; gap: 14px;
+    padding-bottom: 20px;
+  }
+  .house img { width: 44px; height: 44px; border-radius: 10px; border: 1px solid rgba(23,182,201,.45); }
+  .house .wm { font-size: 17px; font-weight: 700; letter-spacing: .14em; color: #fff; }
+  .house .wm .accent { color: #17b6c9; }
+  .house .campaign {
+    margin-left: auto; font-size: 11px; font-weight: 600;
+    letter-spacing: .3em; color: #17b6c9; text-transform: uppercase; white-space: nowrap;
+  }
+
+  /* Product hero */
+  .lockup { display: block; width: min(600px, 92%); margin: 14px auto 6px; }
+  .invite {
+    text-align: center; margin: 6px auto 22px; max-width: 640px;
+    font-size: 16px; line-height: 1.55; color: #9fb2c1;
+  }
+  .hero {
+    display: block; width: 100%; height: auto; border-radius: 18px;
     border: 1px solid rgba(23,182,201,.35);
-    border-radius: 20px;
-    padding: 44px 32px 36px;
-    box-shadow: 0 24px 60px rgba(0,0,0,.45);
+    box-shadow: 0 30px 70px rgba(0,0,0,.5), 0 0 0 6px rgba(23,182,201,.06);
   }
-  .logo {
-    width: 120px; height: 120px; border-radius: 24px;
-    border: 2px solid rgba(23,182,201,.55);
-    box-shadow: 0 0 0 6px rgba(23,182,201,.12), 0 10px 30px rgba(0,0,0,.4);
+
+  /* Benefits — one-screen product story */
+  .benefits {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px;
+    margin: 30px 0 34px;
   }
-  .wordmark {
-    margin: 22px 0 2px; font-size: 26px; font-weight: 700;
-    letter-spacing: .14em; color: #ffffff;
+  .benefit {
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(23,182,201,.22);
+    border-radius: 14px; padding: 20px 20px 18px;
   }
-  .wordmark .accent { color: #17b6c9; }
-  .campaign {
-    margin: 4px 0 0; font-size: 12px; font-weight: 600;
-    letter-spacing: .32em; color: #17b6c9; text-transform: uppercase;
-  }
-  .rule {
-    width: 64px; height: 2px; margin: 26px auto;
-    background: linear-gradient(90deg, transparent, #17b6c9, transparent);
-  }
-  h1 { margin: 0 0 8px; font-size: 30px; font-weight: 650; }
-  /* Product lockup — Muse in a Meeting (hero) */
-  .product {
-    margin: 0 0 6px; font-size: 42px; font-weight: 750;
-    letter-spacing: -.01em; color: #ffffff; line-height: 1.12;
-  }
-  .product .accent { color: #17b6c9; }
-  .ptag {
-    margin: 0 0 14px; font-size: 19px; font-weight: 600; color: #17b6c9;
-  }
-  .maker {
-    margin: 10px 0 0; font-size: 11px; font-weight: 600;
-    letter-spacing: .22em; color: #5f7d92; text-transform: uppercase;
-  }
-  .sub { margin: 0 0 30px; font-size: 16px; line-height: 1.5; color: #9fb2c1; }
+  .benefit .tick { width: 34px; height: 3px; border-radius: 2px; background: linear-gradient(90deg, #1cc7da, #0e93a6); margin-bottom: 14px; }
+  .benefit h2 { margin: 0 0 8px; font-size: 17px; font-weight: 700; color: #fff; }
+  .benefit p { margin: 0; font-size: 14.5px; line-height: 1.55; color: #9fb2c1; }
+
+  /* Join */
+  .joinbox { text-align: center; }
   .join {
-    display: inline-block; width: 100%; max-width: 340px;
-    padding: 16px 24px; border-radius: 12px;
+    display: inline-block; width: 100%; max-width: 420px;
+    padding: 17px 24px; border-radius: 12px;
     background: linear-gradient(180deg, #1cc7da, #0e93a6);
-    color: #04222b; font-size: 18px; font-weight: 700; letter-spacing: .02em;
+    color: #04222b; font-size: 19px; font-weight: 700; letter-spacing: .02em;
     text-decoration: none;
-    box-shadow: 0 10px 26px rgba(23,182,201,.35);
+    box-shadow: 0 12px 30px rgba(23,182,201,.35);
     transition: transform .12s ease, box-shadow .12s ease;
   }
-  .join:hover, .join:focus { transform: translateY(-1px); box-shadow: 0 14px 32px rgba(23,182,201,.45); }
-  .note { margin: 18px 0 0; font-size: 13px; color: #7f95a7; }
-  .tagline {
-    margin: 34px 0 0; font-size: 11px; font-weight: 600;
-    letter-spacing: .22em; color: #5f7d92; text-transform: uppercase;
+  .join:hover, .join:focus { transform: translateY(-1px); box-shadow: 0 16px 36px rgba(23,182,201,.45); }
+  .note { margin: 14px 0 0; font-size: 13px; color: #7f95a7; }
+
+  footer { margin-top: 40px; text-align: center; }
+  footer .maker { font-size: 11px; font-weight: 600; letter-spacing: .22em; color: #5f7d92; text-transform: uppercase; }
+  footer .tagline { margin-top: 10px; font-size: 11px; font-weight: 600; letter-spacing: .22em; color: #5f7d92; text-transform: uppercase; }
+
+  @media (max-width: 720px) {
+    body { padding: 20px 14px 32px; }
+    .house .campaign { display: none; }
+    .benefits { grid-template-columns: 1fr; gap: 12px; margin: 24px 0 28px; }
+    .lockup { width: 100%; }
   }
 </style>
 </head>
 <body>
-  <main class="card">
-    <img class="logo" src="mi-logo.jpg" alt="Moseley Innovations logo">
-    <div class="wordmark">MOSELEY <span class="accent">INNOVATIONS</span></div>
-    <p class="campaign">From Manual to Modern</p>
-    <div class="rule"></div>
-    <h1 class="product">Muse in a <span class="accent">Meeting</span></h1>
-    <p class="ptag">Put your Muse in the meeting.</p>
-    <p class="sub">You&rsquo;re invited to a Moseley Innovations video meeting.<br>Tap below to join the room.</p>
-    <a class="join" href="https://meet.google.com/zau-dfpp-hxp">Join the Meeting</a>
-    <p class="note">Opens Google Meet in your browser or the Meet app.</p>
-    <p class="maker">Muse in a Meeting &middot; by Moseley Innovations</p>
-    <p class="tagline">AI &middot; Automation &middot; Content Systems &middot; Government Solutions</p>
-  </main>
+  <div class="wrap">
+    <header class="house">
+      <img src="mi-logo.jpg" alt="Moseley Innovations logo">
+      <div class="wm">MOSELEY <span class="accent">INNOVATIONS</span></div>
+      <div class="campaign">From Manual to Modern</div>
+    </header>
+
+    <main>
+      <img class="lockup" src="muse-in-a-meeting-lockup.svg" alt="Muse in a Meeting — Put your Muse in the meeting. By Moseley Innovations">
+      <p class="invite">You&rsquo;re invited to a meeting room where the Muse is already in the room. Tap below to join the call.</p>
+      <img class="hero" src="muse-in-a-meeting-hero.png" alt="Muse in a Meeting: a video call grid where the Muse — Lash — sits in its own tile, speaking live, captioned as it talks">
+
+      <section class="benefits" aria-label="What Muse in a Meeting does">
+        <div class="benefit">
+          <div class="tick"></div>
+          <h2>Present, not plugged in</h2>
+          <p>Joins your call as a real participant — with a face, a voice, and a seat in the room.</p>
+        </div>
+        <div class="benefit">
+          <div class="tick"></div>
+          <h2>Speaks and answers live</h2>
+          <p>Ask it, brief it, push back — it responds in the conversation, in real time.</p>
+        </div>
+        <div class="benefit">
+          <div class="tick"></div>
+          <h2>The follow-up, handled</h2>
+          <p>Notes, decisions, and next steps are captured before the call even ends.</p>
+        </div>
+      </section>
+
+      <div class="joinbox">
+        <a class="join" href="https://meet.google.com/zau-dfpp-hxp">Join the Meeting</a>
+        <p class="note">Opens Google Meet in your browser or the Meet app.</p>
+      </div>
+    </main>
+
+    <footer>
+      <div class="maker">Muse in a Meeting &middot; by Moseley Innovations</div>
+      <div class="tagline">AI &middot; Automation &middot; Content Systems &middot; Government Solutions</div>
+    </footer>
+  </div>
 </body>
 </html>
