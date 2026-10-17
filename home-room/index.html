@@ -135,6 +135,31 @@
   #sheetBtns button{flex:1 1 0; min-height:52px; border-radius:12px; font-size:16px; font-weight:650; border:1px solid var(--line); background:var(--panel2); color:var(--ink)}
   #sheetBtns #sheetGo{background:var(--accent); color:var(--accent-ink); border-color:var(--accent)}
   #sheetErr{color:var(--bad); font-size:13.5px; min-height:18px; margin-top:10px}
+  /* ---------- guided test card ---------- */
+  #testCard{
+    flex:0 0 auto; background:#241a08; border-top:2px solid var(--accent);
+    border-bottom:2px solid var(--accent); padding:12px 14px calc(10px);
+  }
+  #testCard[hidden]{display:none}
+  #testHead{display:flex; align-items:baseline; gap:10px; flex-wrap:wrap}
+  #testStepNum{font-size:12px; font-weight:800; letter-spacing:1.2px; color:var(--accent)}
+  #testStepName{font-size:19px; font-weight:750}
+  #testInstr{color:var(--dim); font-size:14px; margin:5px 0 8px}
+  .tline{
+    font-size:21px; font-weight:650; line-height:1.35; color:var(--ink);
+    background:var(--panel2); border:1px solid var(--line); border-radius:12px;
+    padding:9px 12px; margin:0 0 7px;
+  }
+  .tline .tlabel{display:block; font-size:12.5px; font-weight:700; color:var(--warn);
+    text-transform:uppercase; letter-spacing:.6px; margin-bottom:3px}
+  .tline.hdr{border-color:var(--warn)}
+  .tline.cut{border-color:var(--bad)}
+  #testBtns{display:flex; gap:9px; margin-top:4px}
+  #testBtns button{
+    flex:1 1 0; min-height:50px; border-radius:12px; font-size:16px; font-weight:700;
+    border:1px solid var(--line); background:var(--panel2); color:var(--ink); cursor:pointer;
+  }
+  #testNext{background:var(--accent); color:var(--accent-ink); border-color:var(--accent)}
   /* ---------- sim panel ---------- */
   #simPanel{
     display:none; flex:0 0 auto; background:#131a12; border-top:1px solid #2c4423;
@@ -167,11 +192,22 @@
   <div id="presenceCol">
     <div id="whoRow"><span id="whoName">Lash</span><span id="presencePill" data-p="away">Away</span></div>
     <div id="statusLine">Not connected yet — tap Talk when you're ready.</div>
-    <div id="connRow"><span id="connDot"></span><span id="connText">no server connection</span></div>
+    <div id="connRow"><span id="connDot"></span><span id="connText">no server connection</span><span id="kitStat"></span></div>
   </div>
 </header>
 
 <main id="threadWrap"><div id="thread"></div><div id="threadEmpty">Voice and typed text live in this one thread.<br>What Lash says, what you say, and what got cut off — all here.</div></main>
+
+<div id="testCard" hidden>
+  <div id="testHead"><span id="testStepNum"></span><span id="testStepName"></span></div>
+  <div id="testInstr"></div>
+  <div id="testLines"></div>
+  <div id="testBtns">
+    <button id="testNext" type="button">Next ▸</button>
+    <button id="testSkip" type="button">Skip</button>
+    <button id="testEnd" type="button">End Test</button>
+  </div>
+</div>
 
 <div id="composer">
   <textarea id="typeInput" rows="1" placeholder="Type instead — same conversation…" enterkeyhint="send"></textarea>
@@ -184,6 +220,7 @@
     <button class="ctl primary" id="talkBtn" type="button">Talk<small>join the room</small></button>
     <button class="ctl" id="muteBtn" type="button" disabled>Mute<small>mic on</small></button>
     <button class="ctl" id="typeBtn" type="button">Type<small>instead</small></button>
+    <button class="ctl" id="testBtn" type="button">Test<small>guided</small></button>
     <button class="ctl danger" id="endBtn" type="button" disabled>End<small>hang up</small></button>
   </div>
 </div>
