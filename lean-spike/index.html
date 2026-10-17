@@ -63,6 +63,15 @@
     background:var(--panel2); color:var(--ink); border-radius:999px;
     padding:5px 12px; font-size:13px; font-weight:650; cursor:pointer}
   #wtBtn.on{border-color:var(--accent); color:var(--accent)}
+  #visBtn{flex:0 0 auto; border:1px solid var(--line);
+    background:var(--panel2); color:var(--ink); border-radius:999px;
+    padding:5px 12px; font-size:13px; font-weight:650; cursor:pointer}
+  #visBtn.on{border-color:var(--bad); color:var(--bad)}
+  #visPanel{flex:0 0 auto; display:none; background:#11161f;
+    border-bottom:1px solid var(--line); padding:10px 14px}
+  #visPreview{width:180px; max-width:60vw; border-radius:10px;
+    border:1px solid var(--line); background:#000}
+  #visCap{font-size:12px; color:var(--dim); margin-top:5px}
   #wtPanel{flex:0 0 auto; background:#11161f; border-bottom:1px solid var(--line);
     padding:12px 14px; display:none}
   #wtPanel.open{display:block}
@@ -85,9 +94,14 @@
 <body>
 
 <header>
-  <div id="whoRow"><span id="whoName">Lash — lean spike</span><span id="pill" data-p="">connecting</span><button id="wtBtn" type="button">▶ Walkthrough test</button></div>
+  <div id="whoRow"><span id="whoName">Lash — lean spike</span><span id="pill" data-p="">connecting</span><button id="wtBtn" type="button">▶ Walkthrough test</button><button id="visBtn" type="button">📷 Visual</button></div>
   <div id="statusLine">The Nova-link with a voice skin: text spine, parallel cues, streamed mouth.</div>
 </header>
+
+<div id="visPanel" aria-label="visual feed">
+  <video id="visPreview" autoplay muted playsinline></video>
+  <div id="visCap">Camera stills every ~5 s while on — Lash sees what you see.</div>
+</div>
 
 <div id="wtPanel" aria-label="walkthrough test">
   <div id="wtProg"></div>
@@ -768,6 +782,114 @@ function encodeWav(chunks, sr){
   return new Blob([buf], {type: "audio/wav"});
 }
 
+/* ---------------- visual leg (camera stills) ----------------
+   Howard's open-ear vision (2026-10-17): he walks around on a
+   bone-conduction headset; while Visual is ON the page sends a
+   camera still immediately and then every ~5 s, so the brain
+   can see what he sees and advise in-ear. Stills, not video:
+   each frame is downscaled to <=1024 px wide, JPEG ~0.7, and
+   POSTed through the same runner upload route as the
+   walkthrough artifacts (kind=frame, keyed by session). A tiny
+   note rides the up channel so the brain learns of the frame
+   at once; the bytes follow over HTTPS. OFF releases the
+   camera completely. Failures are stated on the page in plain
+   words — never a silent dead toggle. */
+const VIS = {on: false, stream: null, timer: null, seq: 0,
+             frames: []};
+$("visBtn").addEventListener("click", () => {
+  if (VIS.on) visOff(); else visOn();
+});
+async function visOn(){
+  if (!navigator.mediaDevices ||
+      !navigator.mediaDevices.getUserMedia){
+    log("visual: camera not available in this browser");
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(
+      {video: {facingMode: "environment"}, audio: false});
+  } catch(e){
+    log("visual: camera permission denied or unavailable — " +
+        (e.message || e));
+    return;
+  }
+  VIS.stream = stream;
+  VIS.on = true;
+  const v = $("visPreview");
+  v.srcObject = stream;
+  $("visPanel").style.display = "block";
+  const btn = $("visBtn");
+  btn.classList.add("on"); btn.textContent = "📷 Visual on";
+  try { await v.play(); } catch(e){}
+  recEvent("visual_on", {});
+  log("visual: camera on — a frame now, then every ~5 s");
+  visCapture();
+  VIS.timer = setInterval(visCapture, 5000);
+}
+function visOff(){
+  VIS.on = false;
+  if (VIS.timer){ clearInterval(VIS.timer); VIS.timer = null; }
+  if (VIS.stream){
+    VIS.stream.getTracks().forEach(t => {
+      try { t.stop(); } catch(e){} });
+    VIS.stream = null;
+  }
+  $("visPreview").srcObject = null;
+  $("visPanel").style.display = "none";
+  const btn = $("visBtn");
+  btn.classList.remove("on"); btn.textContent = "📷 Visual";
+  recEvent("visual_off", {});
+  log("visual: off — camera released");
+}
+async function visCapture(){
+  if (!VIS.on || !VIS.stream) return;
+  const v = $("visPreview");
+  if (!v.videoWidth){
+    log("visual: frame skipped — camera not ready yet");
+    return;
+  }
+  const scale = Math.min(1, 1024 / v.videoWidth);
+  const cv = document.createElement("canvas");
+  cv.width = Math.round(v.videoWidth * scale);
+  cv.height = Math.round(v.videoHeight * scale);
+  cv.getContext("2d").drawImage(v, 0, 0, cv.width, cv.height);
+  const tLocal = Date.now();
+  VIS.seq += 1;
+  const fid = "f" + VIS.seq + "-" + tLocal;
+  const blob = await new Promise(res =>
+    cv.toBlob(res, "image/jpeg", 0.7));
+  if (!blob){
+    log("visual: frame " + fid + " encode FAILED");
+    return;
+  }
+  const rec = {id: fid, t_local_ms: tLocal,
+    t_bridge_ms: Math.round(tBridge() * 1000),
+    bytes: blob.size, uploaded: false};
+  VIS.frames.push(rec);
+  recEvent("frame", {id: fid, bytes: blob.size});
+  // The note goes first — the brain learns of the frame
+  // promptly; the JPEG follows over the upload route.
+  pub(upCh, "frame",
+    {type: "frame", id: fid, t_client: tBridge(),
+     session: uploadSessionId()}, "frame note");
+  try {
+    const r = await fetch(UPLOAD_URL + "?" +
+      new URLSearchParams({session: uploadSessionId(),
+        kind: "frame", fid,
+        t_client: String(Math.round(tBridge() * 1000))}
+      ).toString(),
+      {method: "POST", headers: {"Content-Type": "image/jpeg"},
+       body: blob});
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    rec.uploaded = true;
+    log(`visual: frame ${VIS.seq} uploaded ` +
+        `(${Math.round(blob.size / 1024)} KB)`);
+  } catch(e){
+    log(`visual: frame ${VIS.seq} upload FAILED: ` + e.message);
+  }
+}
+
 /* ---------------- walkthrough ----------------
    TEST-PROTOCOL v1.1's eight maneuvers, adapted to the spike.
    Header discipline is Howard's: say "Test N" first, let the
@@ -1017,6 +1139,7 @@ function buildClientRecord(){
     clock: {pongs: REC.pongs,
             offset_ms_final: Math.round(clockOffset * 1000)},
     steps: REC.steps, events: REC.events,
+    frames: VIS.frames,
     utterances: utters,
     asr: {finals: utters.filter(u => u.source === "asr"),
           partial_count: partialCount - REC.partialCountAtStart},
