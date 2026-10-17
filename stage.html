@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lash</title>
+<title>Lash · Moseley Innovations</title>
 <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
 <script type="importmap">
 {"imports": {
@@ -12,14 +12,14 @@
 }}
 </script>
 <style>
-  html, body { margin:0; height:100%; background:#101418; color:#e8eef2;
+  html, body { margin:0; height:100%; background:radial-gradient(1200px 700px at 50% -10%, #0d2c47 0%, #081c30 45%, #050f1c 100%); color:#e8eef2;
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
   #wrap { height:100%; display:flex; flex-direction:column; align-items:center;
     justify-content:center; gap:18px; padding:24px; box-sizing:border-box; }
   #face { width:220px; height:220px; border-radius:50%;
     background:#fff;
     display:flex; align-items:center; justify-content:center;
-    font-size:110px; border:4px solid #2c3944; transition: box-shadow .25s;
+    font-size:110px; border:4px solid #17b6c9; transition: box-shadow .25s;
     overflow:hidden; }
   #face video { width:100%; height:100%; object-fit:cover; display:block; }
   #face canvas { width:100%; height:100%; display:block; }
@@ -31,11 +31,17 @@
   #face[data-loops="1"] { position:relative; }
   #face[data-loops="1"] video { position:absolute; inset:0; opacity:0;
     transition: opacity .2s ease-in-out; }
-  #face.speaking { box-shadow: 0 0 0 10px rgba(90,180,255,.25), 0 0 60px rgba(90,180,255,.35);
+  #face.speaking { box-shadow: 0 0 0 10px rgba(23,182,201,.25), 0 0 60px rgba(23,182,201,.35);
     animation: talkbob .9s ease-in-out infinite; }
   @keyframes talkbob { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
   #face.listening { box-shadow: 0 0 0 8px rgba(120,255,170,.18); }
   #name { font-size:28px; font-weight:600; letter-spacing:.02em; }
+  #name .name-brand { color:#17b6c9; }
+  /* Moseley Innovations brand strip (skin only — no layout/JS changes) */
+  #brand { display:flex; align-items:center; gap:10px; margin-top:4px; opacity:.9; }
+  #brand img { width:30px; height:30px; border-radius:8px; border:1px solid rgba(23,182,201,.5); display:block; }
+  #brand span { font-size:13px; font-weight:700; letter-spacing:.18em; color:#cfe6ee; }
+  #brand em { font-style:normal; font-size:11px; font-weight:600; letter-spacing:.22em; color:#17b6c9; }
   #status { font-size:15px; color:#9fb2c1; min-height:20px; }
   #caption { max-width:900px; text-align:center; font-size:20px; line-height:1.45;
     color:#d7e3ec; min-height:56px; }
@@ -46,10 +52,11 @@
 <body>
 <div id="wrap">
   <div id="face"><div id="world3d" style="display:none;width:100%;height:100%"></div><canvas id="puppetCanvas" width="900" height="900" style="display:none"></canvas><video id="faceVideo" src="lash-face.mp4" poster="lash-face.jpg" autoplay muted loop playsinline></video><video id="faceTalk" src="lash-talk.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceWork" src="lash-work.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceMake" src="lash-make.mp4" muted loop playsinline preload="auto" style="display:none"></video></div>
-  <div id="name">Lash</div>
+  <div id="name">Lash <span class="name-brand">· Moseley Innovations</span></div>
   <div id="status">connecting…</div>
   <div id="caption"></div>
   <div id="heard"></div>
+  <div id="brand"><img src="mi-logo.jpg" alt="Moseley Innovations logo"><span>MOSELEY INNOVATIONS</span><em>FROM MANUAL TO MODERN</em></div>
 </div>
 <script>
 const qs = new URLSearchParams(location.search);
