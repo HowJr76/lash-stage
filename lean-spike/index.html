@@ -72,6 +72,10 @@
   #visPreview{width:180px; max-width:60vw; border-radius:10px;
     border:1px solid var(--line); background:#000}
   #visCap{font-size:12px; color:var(--dim); margin-top:5px}
+  #visSendBtn{margin-top:8px; border:1px solid var(--line);
+    background:var(--panel2); color:var(--ink); border-radius:10px;
+    padding:8px 14px; font-size:13.5px; font-weight:650;
+    cursor:pointer}
   #wtPanel{flex:0 0 auto; background:#11161f; border-bottom:1px solid var(--line);
     padding:12px 14px; display:none}
   #wtPanel.open{display:block}
@@ -100,7 +104,8 @@
 
 <div id="visPanel" aria-label="visual feed">
   <video id="visPreview" autoplay muted playsinline></video>
-  <div id="visCap">Camera stills every ~5 s while on — Lash sees what you see.</div>
+  <div id="visCap">Buffering the last ~120 s at ~2 fps — Lash can page back through it, or tap the preview to send this view now.</div>
+  <button id="visSendBtn" type="button">Send this view</button>
 </div>
 
 <div id="wtPanel" aria-label="walkthrough test">
@@ -347,6 +352,12 @@ function onDown(m){
       REC.session = d.session;
       sysNote("bridge online — session " + d.session);
     }
+    return;
+  }
+  if (m.name === "frame-request"){
+    recEvent("frame_request", {req: d.req, mode: d.mode});
+    log(`visual: frame_request ${d.req} (${d.mode}) received`);
+    visHandleRequest(d);
     return;
   }
   if (m.name === "clause"){
@@ -782,23 +793,54 @@ function encodeWav(chunks, sr){
   return new Blob([buf], {type: "audio/wav"});
 }
 
-/* ---------------- visual leg (camera stills) ----------------
-   Howard's open-ear vision (2026-10-17): he walks around on a
-   bone-conduction headset; while Visual is ON the page sends a
-   camera still immediately and then every ~5 s, so the brain
-   can see what he sees and advise in-ear. Stills, not video:
-   each frame is downscaled to <=1024 px wide, JPEG ~0.7, and
-   POSTed through the same runner upload route as the
-   walkthrough artifacts (kind=frame, keyed by session). A tiny
-   note rides the up channel so the brain learns of the frame
-   at once; the bytes follow over HTTPS. OFF releases the
-   camera completely. Failures are stated on the page in plain
-   words — never a silent dead toggle. */
-const VIS = {on: false, stream: null, timer: null, seq: 0,
-             frames: []};
+/* ---------------- visual leg: pageable edge buffer --------
+   Howard's design (2026-10-17 09:51): "some buffer of video
+   that you could page through to get the information that you
+   need and sample at the rate that you need so you could look
+   forward and backwards but also look and see what was
+   current." This supersedes the fixed-cadence stills built an
+   hour earlier — that machinery (toggle, upload route, frame
+   note) survives as the floor: exactly ONE frame uploads when
+   Visual turns on, so the brain knows the feed is live.
+   While ON: ~2 fps into a rolling in-memory ring (last
+   ~120 s, <=1024 px wide, JPEG ~0.7); NOTHING uploads
+   continuously. The brain pages the ring with frame_request
+   messages (bridge relays them from its ctl-out drop dir to
+   the down channel); the page selects, uploads the chosen
+   frames via the runner route (kind=frame, req-tagged), and
+   confirms with a frame_reply on the up channel. Buffer stats
+   ride the up channel every ~15 s and piggyback on replies.
+   Howard can also tap the preview / "Send this view" to push
+   the current frame immediately (req "manual").
+   Platform constraint, recorded not chased: a backgrounded
+   tab or locked screen starves capture on iOS — the ring
+   marks the gap (VIS.gaps, a client-record event, a plain log
+   line) and buffer stats always describe the ring as it is. */
+const VIS = {on: false, stream: null, tickTimer: null,
+  statTimer: null, seq: 0, ring: [], gaps: [], replies: [],
+  lastTickAt: null, capturing: false, liveSent: false,
+  statFails: 0};
+const RING_MS = 120000, TICK_MS = 500;
 $("visBtn").addEventListener("click", () => {
   if (VIS.on) visOff(); else visOn();
 });
+$("visSendBtn").addEventListener("click", () => visSendView());
+$("visPreview").addEventListener("click", () => visSendView());
+
+function visBufferStat(){
+  if (!VIS.ring.length)
+    return {frames: 0, span_s: 0, oldest: null, newest: null};
+  const o = VIS.ring[0], n = VIS.ring[VIS.ring.length - 1];
+  return {frames: VIS.ring.length,
+    span_s: Math.round((n.t_bridge_ms - o.t_bridge_ms) / 100) / 10,
+    oldest: o.t_bridge_ms / 1000, newest: n.t_bridge_ms / 1000};
+}
+function visSendStat(){
+  const ok = pub(upCh, "buffer-stat",
+    Object.assign({type: "buffer_stat"}, visBufferStat(),
+      {t_client: tBridge()}), "buffer_stat", true);
+  if (!ok) VIS.statFails++;
+}
 async function visOn(){
   if (!navigator.mediaDevices ||
       !navigator.mediaDevices.getUserMedia){
@@ -816,6 +858,8 @@ async function visOn(){
   }
   VIS.stream = stream;
   VIS.on = true;
+  VIS.liveSent = false;
+  VIS.lastTickAt = null;
   const v = $("visPreview");
   v.srcObject = stream;
   $("visPanel").style.display = "block";
@@ -823,13 +867,21 @@ async function visOn(){
   btn.classList.add("on"); btn.textContent = "📷 Visual on";
   try { await v.play(); } catch(e){}
   recEvent("visual_on", {});
-  log("visual: camera on — a frame now, then every ~5 s");
-  visCapture();
-  VIS.timer = setInterval(visCapture, 5000);
+  log("visual: camera on — buffering ~2 fps for the last " +
+      "~120 s; one live frame goes up now");
+  visTick();
+  VIS.tickTimer = setInterval(visTick, TICK_MS);
+  visSendStat();
+  VIS.statTimer = setInterval(visSendStat, 15000);
 }
 function visOff(){
   VIS.on = false;
-  if (VIS.timer){ clearInterval(VIS.timer); VIS.timer = null; }
+  if (VIS.tickTimer){
+    clearInterval(VIS.tickTimer); VIS.tickTimer = null;
+  }
+  if (VIS.statTimer){
+    clearInterval(VIS.statTimer); VIS.statTimer = null;
+  }
   if (VIS.stream){
     VIS.stream.getTracks().forEach(t => {
       try { t.stop(); } catch(e){} });
@@ -839,55 +891,143 @@ function visOff(){
   $("visPanel").style.display = "none";
   const btn = $("visBtn");
   btn.classList.remove("on"); btn.textContent = "📷 Visual";
-  recEvent("visual_off", {});
-  log("visual: off — camera released");
+  recEvent("visual_off", {frames: VIS.ring.length,
+    gaps: VIS.gaps.length});
+  log(`visual: off — camera released (ring held ` +
+      `${VIS.ring.length} frames, ${VIS.gaps.length} gap(s))`);
 }
-async function visCapture(){
-  if (!VIS.on || !VIS.stream) return;
-  const v = $("visPreview");
-  if (!v.videoWidth){
-    log("visual: frame skipped — camera not ready yet");
-    return;
-  }
-  const scale = Math.min(1, 1024 / v.videoWidth);
-  const cv = document.createElement("canvas");
-  cv.width = Math.round(v.videoWidth * scale);
-  cv.height = Math.round(v.videoHeight * scale);
-  cv.getContext("2d").drawImage(v, 0, 0, cv.width, cv.height);
-  const tLocal = Date.now();
-  VIS.seq += 1;
-  const fid = "f" + VIS.seq + "-" + tLocal;
-  const blob = await new Promise(res =>
-    cv.toBlob(res, "image/jpeg", 0.7));
-  if (!blob){
-    log("visual: frame " + fid + " encode FAILED");
-    return;
-  }
-  const rec = {id: fid, t_local_ms: tLocal,
-    t_bridge_ms: Math.round(tBridge() * 1000),
-    bytes: blob.size, uploaded: false};
-  VIS.frames.push(rec);
-  recEvent("frame", {id: fid, bytes: blob.size});
-  // The note goes first — the brain learns of the frame
-  // promptly; the JPEG follows over the upload route.
-  pub(upCh, "frame",
-    {type: "frame", id: fid, t_client: tBridge(),
-     session: uploadSessionId()}, "frame note");
+function visSnap(fullRes){
+  return new Promise(res => {
+    const v = $("visPreview");
+    if (!VIS.on || !v.videoWidth) return res(null);
+    const scale = fullRes ? 1
+      : Math.min(1, 1024 / v.videoWidth);
+    const cv = document.createElement("canvas");
+    cv.width = Math.round(v.videoWidth * scale);
+    cv.height = Math.round(v.videoHeight * scale);
+    cv.getContext("2d").drawImage(v, 0, 0, cv.width, cv.height);
+    const tLocal = Date.now();
+    VIS.seq += 1;
+    const fid = "f" + VIS.seq + "-" + tLocal;
+    cv.toBlob(b => res(b ? {fid, blob: b, tLocal,
+      tBridge: Math.round(tBridge() * 1000)} : null),
+      "image/jpeg", 0.7);
+  });
+}
+async function uploadFrame(entry, req){
   try {
+    const params = {session: uploadSessionId(), kind: "frame",
+      fid: entry.id, t_client: String(entry.t_bridge_ms)};
+    if (req) params.req = req;
     const r = await fetch(UPLOAD_URL + "?" +
-      new URLSearchParams({session: uploadSessionId(),
-        kind: "frame", fid,
-        t_client: String(Math.round(tBridge() * 1000))}
-      ).toString(),
+      new URLSearchParams(params).toString(),
       {method: "POST", headers: {"Content-Type": "image/jpeg"},
-       body: blob});
+       body: entry.blob});
     if (!r.ok) throw new Error("HTTP " + r.status);
-    rec.uploaded = true;
-    log(`visual: frame ${VIS.seq} uploaded ` +
-        `(${Math.round(blob.size / 1024)} KB)`);
+    entry.uploaded = true;
+    entry.req = req;
+    return true;
   } catch(e){
-    log(`visual: frame ${VIS.seq} upload FAILED: ` + e.message);
+    log(`visual: frame ${entry.id} upload FAILED: ` +
+        e.message);
+    return false;
   }
+}
+async function visTick(){
+  if (!VIS.on || VIS.capturing) return;
+  const nowMs = Date.now();
+  if (VIS.lastTickAt && nowMs - VIS.lastTickAt > 1500){
+    const gap = {from_ms: VIS.lastTickAt, to_ms: nowMs,
+      seconds: Math.round((nowMs - VIS.lastTickAt) / 100) / 10};
+    VIS.gaps.push(gap);
+    recEvent("visual_gap", gap);
+    log(`visual: capture gap of ${gap.seconds}s — tab ` +
+        `backgrounded or screen locked; the ring shows it`);
+  }
+  VIS.lastTickAt = nowMs;
+  VIS.capturing = true;
+  try {
+    const snap = await visSnap(false);
+    if (snap){
+      const entry = {id: snap.fid, t_local_ms: snap.tLocal,
+        t_bridge_ms: snap.tBridge, bytes: snap.blob.size,
+        blob: snap.blob, uploaded: false, req: null};
+      VIS.ring.push(entry);
+      const cut = nowMs - RING_MS;
+      while (VIS.ring.length &&
+             VIS.ring[0].t_local_ms < cut) VIS.ring.shift();
+      if (!VIS.liveSent){
+        VIS.liveSent = true;
+        uploadFrame(entry, "live");
+        pub(upCh, "frame", {type: "frame", id: entry.id,
+          t_client: tBridge(), session: uploadSessionId(),
+          buffer: visBufferStat()}, "frame note");
+      }
+    }
+  } finally { VIS.capturing = false; }
+}
+async function visSendView(){
+  if (!VIS.on){
+    log("visual: “Send this view” needs Visual on first");
+    return;
+  }
+  const snap = await visSnap(true);
+  if (!snap){
+    log("visual: Send this view — camera not ready yet");
+    return;
+  }
+  const entry = {id: snap.fid, t_local_ms: snap.tLocal,
+    t_bridge_ms: snap.tBridge, bytes: snap.blob.size,
+    blob: snap.blob, uploaded: false, req: null};
+  const ok = await uploadFrame(entry, "manual");
+  pub(upCh, "frame", {type: "frame", id: entry.id, manual: true,
+    t_client: tBridge(), session: uploadSessionId(),
+    buffer: visBufferStat()}, "frame note");
+  if (ok) log("visual: current view sent");
+}
+async function visHandleRequest(d){
+  const req = d.req || "unknown";
+  if (!VIS.on){
+    pub(upCh, "frame-reply", {type: "frame_reply", req,
+      count: 0, frames: [], error: "visual off",
+      t_client: tBridge(), buffer: visBufferStat()},
+      "frame_reply");
+    log(`visual: frame_request ${req} arrived but Visual is ` +
+        `OFF — replied with 0`);
+    return;
+  }
+  let picked = [];
+  if (d.mode === "now"){
+    const snap = await visSnap(true);
+    if (snap) picked = [{id: snap.fid, t_local_ms: snap.tLocal,
+      t_bridge_ms: snap.tBridge, bytes: snap.blob.size,
+      blob: snap.blob, uploaded: false, req: null}];
+  } else {
+    const t0 = (d.t0 || 0) * 1000;
+    const t1 = (d.t1 === undefined || d.t1 === null)
+      ? Infinity : d.t1 * 1000;
+    const everyMs = Math.max(0, (d.every || 0) * 1000);
+    const max = d.max || 12;
+    let lastPicked = -Infinity;
+    for (const f of VIS.ring){
+      if (f.t_bridge_ms < t0 || f.t_bridge_ms > t1) continue;
+      if (f.t_bridge_ms - lastPicked < everyMs) continue;
+      picked.push(f);
+      lastPicked = f.t_bridge_ms;
+      if (picked.length >= max) break;
+    }
+  }
+  let okCount = 0;
+  for (const f of picked)
+    if (await uploadFrame(f, req)) okCount++;
+  const reply = {type: "frame_reply", req, count: okCount,
+    frames: picked.map(f => f.id), t_client: tBridge(),
+    buffer: visBufferStat()};
+  pub(upCh, "frame-reply", reply, "frame_reply");
+  VIS.replies.push(reply);
+  recEvent("frame_reply", {req, count: okCount});
+  log(`visual: frame_request ${req} (${d.mode}) → ` +
+      `${okCount} frame(s) uploaded`);
 }
 
 /* ---------------- walkthrough ----------------
@@ -1139,7 +1279,10 @@ function buildClientRecord(){
     clock: {pongs: REC.pongs,
             offset_ms_final: Math.round(clockOffset * 1000)},
     steps: REC.steps, events: REC.events,
-    frames: VIS.frames,
+    frames: VIS.ring.map(f => ({id: f.id,
+      t_local_ms: f.t_local_ms, t_bridge_ms: f.t_bridge_ms,
+      bytes: f.bytes, uploaded: f.uploaded, req: f.req})),
+    visual_gaps: VIS.gaps, visual_replies: VIS.replies,
     utterances: utters,
     asr: {finals: utters.filter(u => u.source === "asr"),
           partial_count: partialCount - REC.partialCountAtStart},
