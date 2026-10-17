@@ -315,6 +315,10 @@ function onDown(m){
   if (m.name === "pong"){
     const rtt = now() - d.t0;
     clockOffset = d.t_bridge_recv - (d.t0 + rtt / 2);
+    // The bridge-online note is fire-once at bridge startup; a
+    // page joining later learns the session id from any pong.
+    if (d.session && REC.session !== d.session)
+      REC.session = d.session;
     REC.pongs.push({t_local_ms: Date.now(),
       offset_ms: Math.round(clockOffset * 1000),
       rtt_ms: Math.round(rtt * 1000)});
