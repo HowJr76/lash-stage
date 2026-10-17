@@ -462,6 +462,7 @@ async function connect() {
     if (track.kind === 'audio' && participant.identity === cfg.agentIdentity) {
       track.attach(els.remoteAudio);
       kitRemoteTrack(track);
+      kitAttachJitter(room, track);
     }
   });
   room.on('disconnected', () => { teardown('Disconnected from the server.'); });
@@ -798,6 +799,20 @@ $('connRow').addEventListener('click', () => { if (!connected) openSheet(); });
 
 const KIT_ON = !SIM && qs.get('kit') !== '0' &&
   (qs.get('kit') === '1' || cfg.room === 'home-room');
+
+// Jitter-buffer trim (car-session fix pass, 2026-10-16): the
+// phone's WebRTC jitter buffer held a median ~1,068 ms of
+// already-published voice after a cut — the tail Howard kept
+// hearing after saying stop. Ask the browser for a SHALLOW
+// target (100 ms) on the agent track's receiver so a cut goes
+// quiet fast. Conservative: 100 ms still absorbs ordinary
+// cellular jitter bursts; ?jit=0 restores the browser default
+// exactly (pre-fix behavior). Scoped like the kit (home-room,
+// or ?jit=1 anywhere); the outcome and the measured buffered
+// audio land in the timing bundle as jitter_cfg / jbuf events.
+const JIT_ON = !SIM && qs.get('jit') !== '0' &&
+  (qs.get('jit') === '1' || cfg.room === 'home-room');
+const JIT_TARGET_MS = 100;
 const KIT_CHUNK_BYTES = 8000;         // raw bytes per data packet
 const KIT_SLICE_MS = 4000;            // recorder timeslice
 const KIT_SEG_ON = 0.030, KIT_SEG_OFF = 0.018;
@@ -813,7 +828,77 @@ const kit = {
   pcm: null, sliceSeq: 0, slices: {},
   remoteWired: false, remotePresent: false,
   stored: null, timingStored: null, _storedWaiters: [], _timingWaiters: [],
+  jitRecv: null, jitPc: null, jitLast: null, jitState: null,
+  jitTimer: null,
 };
+
+/* ------------------- jitter trim (car-fix) ------------------- */
+
+function kitAttachJitter(rm, track) {
+  kit.jitState = { enabled: JIT_ON, applied: false };
+  if (!JIT_ON) return;
+  try {
+    const eng = rm && rm.engine;
+    const pc = eng && eng.pcManager && eng.pcManager.subscriber &&
+      eng.pcManager.subscriber.pc;
+    if (!pc || !pc.getReceivers) {
+      kit.jitState.error = 'no subscriber pc';
+      return;
+    }
+    const want = track && track.mediaStreamTrack &&
+      track.mediaStreamTrack.id;
+    const recv = pc.getReceivers().find((r) =>
+      r.track && ((want && r.track.id === want) ||
+                  r.track.kind === 'audio'));
+    if (!recv) { kit.jitState.error = 'no receiver'; return; }
+    kit.jitRecv = recv; kit.jitPc = pc;
+    let readback;
+    try {
+      recv.jitterBufferTarget = JIT_TARGET_MS;
+      readback = recv.jitterBufferTarget;
+    } catch (e) { kit.jitState.error = 'target: ' + e.message; }
+    try { recv.playoutDelayHint = JIT_TARGET_MS / 1000; }
+    catch (e) { /* legacy hint is best-effort */ }
+    kit.jitState.applied = readback !== undefined &&
+      readback !== null;
+    kit.jitState.target = kit.jitState.applied ? readback : null;
+    kitEv('jitter_cfg', { target_ms: JIT_TARGET_MS,
+      readback_ms: kit.jitState.target,
+      applied: kit.jitState.applied,
+      hint_s: (() => { try { return recv.playoutDelayHint; }
+                       catch (e) { return null; } })() });
+    if (!kit.jitTimer) {
+      kit.jitTimer = setInterval(kitSampleJitter, 5000);
+    }
+  } catch (e) {
+    kit.jitState.error = String((e && e.message) || e);
+  }
+}
+
+async function kitSampleJitter() {
+  if (!kit.jitPc || !kit.jitRecv || !kit.jitRecv.track) return;
+  try {
+    const stats = await kit.jitPc.getStats(kit.jitRecv.track);
+    let rep = null;
+    stats.forEach((r) => {
+      if (r.type === 'inbound-rtp' &&
+          (r.kind === 'audio' || r.mediaType === 'audio')) rep = r;
+    });
+    if (!rep || rep.jitterBufferEmittedCount === undefined) return;
+    const cur = { delay: rep.jitterBufferDelay || 0,
+                  count: rep.jitterBufferEmittedCount || 0 };
+    if (kit.jitLast && cur.count > kit.jitLast.count) {
+      const avgMs = (cur.delay - kit.jitLast.delay) /
+                    (cur.count - kit.jitLast.count) * 1000;
+      kitEv('jbuf', { avg_ms: Math.round(avgMs * 10) / 10,
+        jitter_ms: Math.round((rep.jitter || 0) * 10000) / 10,
+        target_ms: (() => { try {
+          return kit.jitRecv.jitterBufferTarget; }
+          catch (e) { return null; } })() });
+    }
+    kit.jitLast = cur;
+  } catch (e) { /* stats are best-effort */ }
+}
 
 function kitStat(txt) { if (els.kitStat) els.kitStat.textContent = txt ? ' · ' + txt : ''; }
 function kitNow() { return performance.now() - kit.perf0; }
@@ -1166,6 +1251,7 @@ async function kitFinish() {
   kit.finishing = true;
   kitStat('kit: uploading…');
   if (kit.pingTimer) { clearInterval(kit.pingTimer); kit.pingTimer = null; }
+  if (kit.jitTimer) { clearInterval(kit.jitTimer); kit.jitTimer = null; }
   kitPing();
   // Stop the recorder; the final slice uploads from ondataavailable.
   try {
@@ -1203,6 +1289,7 @@ async function kitStop() {
   if (!kit.active || kit.finishing) return;
   kit.finishing = true;
   if (kit.pingTimer) { clearInterval(kit.pingTimer); kit.pingTimer = null; }
+  if (kit.jitTimer) { clearInterval(kit.jitTimer); kit.jitTimer = null; }
   try {
     if (kit.recorder && kit.recorder.state !== 'inactive') kit.recorder.stop();
     else if (kit.pcm) await kit.pcm.flush();
@@ -1239,6 +1326,7 @@ window.HomeRoom = {
     slices: Object.keys(kit.slices).length,
     acked: Object.values(kit.slices).filter((s) => s.acked).length,
     stored: kit.stored, timingStored: kit.timingStored,
+    jitOn: JIT_ON, jit: kit.jitState,
   }),
   test: () => ({ active: testMode.active, step: testMode.step + 1,
                  name: testMode.step >= 0
