@@ -4,85 +4,92 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Muse in a Meeting · Moseley Innovations</title>
-<meta name="description" content="Muse in a Meeting — put your Muse in the meeting. It joins your video call as a participant: speaking, answering, and following up live. A Moseley Innovations product.">
+<meta name="description" content="Bring your own AI assistant into live video meetings—with its own tile, face, and voice. It listens, speaks, answers questions, and follows up.">
 <meta property="og:title" content="Muse in a Meeting">
-<meta property="og:description" content="Put your Muse in the meeting. Your Muse joins the call as a participant — speaking, answering, and following up live.">
+<meta property="og:description" content="Bring your own AI assistant into live video meetings—with its own tile, face, and voice. It listens, speaks, answers questions, and follows up.">
 <meta property="og:type" content="website">
 <meta property="og:image" content="https://howjr76.github.io/lash-stage/muse-in-a-meeting-og.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="https://howjr76.github.io/lash-stage/muse-in-a-meeting-og.png">
 <link rel="icon" type="image/svg+xml" href="muse-in-a-meeting-icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; min-height: 100%; }
   body {
-    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: radial-gradient(1200px 700px at 50% -10%, #0d2c47 0%, #081c30 45%, #050f1c 100%);
-    color: #e8eef2;
-    padding: 28px 18px 40px;
+    font-family: "Manrope", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background:
+      radial-gradient(900px 480px at 85% 0%, rgba(25,211,197,.14) 0%, rgba(25,211,197,0) 60%),
+      linear-gradient(180deg, #ffffff 0%, #f2fafa 55%, #e9f6f6 100%);
+    color: #071b2c;
+    padding: 28px 18px 44px;
   }
   .wrap { max-width: 1020px; margin: 0 auto; }
 
   /* House brand bar — Moseley Innovations is the maker */
-  .house {
-    display: flex; align-items: center; gap: 14px;
-    padding-bottom: 20px;
-  }
-  .house img { width: 44px; height: 44px; border-radius: 10px; border: 1px solid rgba(23,182,201,.45); }
-  .house .wm { font-size: 17px; font-weight: 700; letter-spacing: .14em; color: #fff; }
-  .house .wm .accent { color: #17b6c9; }
-  .house .campaign {
-    margin-left: auto; font-size: 11px; font-weight: 600;
-    letter-spacing: .3em; color: #17b6c9; text-transform: uppercase; white-space: nowrap;
-  }
+  .house { display: flex; align-items: center; gap: 14px; padding-bottom: 8px; }
+  .house img { width: 44px; height: 44px; border-radius: 10px; border: 1px solid rgba(14,148,136,.40); }
+  .house .wm { font-size: 17px; font-weight: 800; letter-spacing: .14em; color: #071b2c; }
+  .house .wm .accent { color: #0e9488; }
 
-  /* Product hero */
-  .lockup { display: block; width: min(600px, 92%); margin: 14px auto 6px; }
-  .invite {
-    text-align: center; margin: 6px auto 22px; max-width: 640px;
-    font-size: 16px; line-height: 1.55; color: #9fb2c1;
+  /* Product identity + hero copy (panel copy of record) */
+  .lockup { display: block; width: min(600px, 92%); margin: 18px auto 4px; }
+  h1 {
+    text-align: center; margin: 26px auto 14px;
+    font-size: 56px; line-height: 60px; font-weight: 700; letter-spacing: -0.01em; color: #071b2c;
+  }
+  .subhead {
+    text-align: center; margin: 0 auto 28px; max-width: 720px;
+    font-size: 20px; line-height: 30px; font-weight: 400; color: #33566b;
   }
   .hero {
     display: block; width: 100%; height: auto; border-radius: 18px;
-    border: 1px solid rgba(23,182,201,.35);
-    box-shadow: 0 30px 70px rgba(0,0,0,.5), 0 0 0 6px rgba(23,182,201,.06);
+    border: 1px solid rgba(7,27,44,.08);
+    box-shadow: 0 30px 60px rgba(7,27,44,.18), 0 4px 14px rgba(7,27,44,.08);
   }
 
-  /* Benefits — one-screen product story */
+  /* Benefits — panel wording, verbatim */
   .benefits {
     display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px;
-    margin: 30px 0 34px;
+    margin: 32px 0 36px;
   }
   .benefit {
-    background: rgba(255,255,255,.03);
-    border: 1px solid rgba(23,182,201,.22);
-    border-radius: 14px; padding: 20px 20px 18px;
+    background: #ffffff;
+    border: 1px solid rgba(7,27,44,.09);
+    border-radius: 14px; padding: 22px 20px 20px;
+    box-shadow: 0 8px 22px rgba(7,27,44,.06);
   }
-  .benefit .tick { width: 34px; height: 3px; border-radius: 2px; background: linear-gradient(90deg, #1cc7da, #0e93a6); margin-bottom: 14px; }
-  .benefit h2 { margin: 0 0 8px; font-size: 17px; font-weight: 700; color: #fff; }
-  .benefit p { margin: 0; font-size: 14.5px; line-height: 1.55; color: #9fb2c1; }
+  .benefit .tick { width: 34px; height: 3px; border-radius: 2px; background: linear-gradient(90deg, #19d3c5, #0e9488); margin-bottom: 14px; }
+  .benefit h2 { margin: 0 0 8px; font-size: 17px; line-height: 1.35; font-weight: 700; color: #071b2c; }
+  .benefit p { margin: 0; font-size: 15px; line-height: 1.55; color: #33566b; }
 
-  /* Join */
+  /* Join — the page's prominent action */
   .joinbox { text-align: center; }
   .join {
-    display: inline-block; width: 100%; max-width: 420px;
-    padding: 17px 24px; border-radius: 12px;
-    background: linear-gradient(180deg, #1cc7da, #0e93a6);
-    color: #04222b; font-size: 19px; font-weight: 700; letter-spacing: .02em;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 100%; max-width: 420px; min-height: 52px;
+    padding: 14px 24px; border-radius: 8px;
+    background: #19d3c5;
+    color: #071b2c; font-size: 19px; font-weight: 700; letter-spacing: .01em;
     text-decoration: none;
-    box-shadow: 0 12px 30px rgba(23,182,201,.35);
+    box-shadow: 0 12px 28px rgba(25,211,197,.38);
     transition: transform .12s ease, box-shadow .12s ease;
   }
-  .join:hover, .join:focus { transform: translateY(-1px); box-shadow: 0 16px 36px rgba(23,182,201,.45); }
-  .note { margin: 14px 0 0; font-size: 13px; color: #7f95a7; }
+  .join:hover, .join:focus { transform: translateY(-1px); box-shadow: 0 16px 34px rgba(25,211,197,.48); }
+  .note { margin: 14px 0 0; font-size: 13px; color: #64808f; }
 
-  footer { margin-top: 40px; text-align: center; }
-  footer .maker { font-size: 11px; font-weight: 600; letter-spacing: .22em; color: #5f7d92; text-transform: uppercase; }
-  footer .tagline { margin-top: 10px; font-size: 11px; font-weight: 600; letter-spacing: .22em; color: #5f7d92; text-transform: uppercase; }
+  /* Maker branding lives in the footer (panel spec) */
+  footer { margin-top: 44px; text-align: center; }
+  footer .maker { font-size: 11px; font-weight: 700; letter-spacing: .22em; color: #64808f; text-transform: uppercase; }
+  footer .campaign { margin-top: 10px; font-size: 11px; font-weight: 700; letter-spacing: .3em; color: #0e9488; text-transform: uppercase; }
+  footer .tagline { margin-top: 8px; font-size: 11px; font-weight: 600; letter-spacing: .22em; color: #64808f; text-transform: uppercase; }
 
   @media (max-width: 720px) {
-    body { padding: 20px 14px 32px; }
-    .house .campaign { display: none; }
+    body { padding: 20px 14px 36px; }
+    h1 { font-size: 38px; line-height: 42px; }
+    .subhead { font-size: 18px; line-height: 28px; }
     .benefits { grid-template-columns: 1fr; gap: 12px; margin: 24px 0 28px; }
     .lockup { width: 100%; }
   }
@@ -93,29 +100,29 @@
     <header class="house">
       <img src="mi-logo.jpg" alt="Moseley Innovations logo">
       <div class="wm">MOSELEY <span class="accent">INNOVATIONS</span></div>
-      <div class="campaign">From Manual to Modern</div>
     </header>
 
     <main>
       <img class="lockup" src="muse-in-a-meeting-lockup.svg" alt="Muse in a Meeting — Put your Muse in the meeting. By Moseley Innovations">
-      <p class="invite">You&rsquo;re invited to a meeting room where the Muse is already in the room. Tap below to join the call.</p>
-      <img class="hero" src="muse-in-a-meeting-hero.png" alt="Muse in a Meeting: a video call grid where the Muse — Lash — sits in its own tile, speaking live, captioned as it talks">
+      <h1>Put your Muse<br>in the meeting.</h1>
+      <p class="subhead">Bring your own AI assistant into live video meetings—with its own tile, face, and voice. It listens, speaks, answers questions, and follows up.</p>
+      <img class="hero" src="muse-in-a-meeting-hero.png" alt="Muse in a Meeting: a bright video call where the Muse sits in its own tile as a fourth participant, answering a question about launch reporting">
 
       <section class="benefits" aria-label="What Muse in a Meeting does">
         <div class="benefit">
           <div class="tick"></div>
-          <h2>Present, not plugged in</h2>
-          <p>Joins your call as a real participant — with a face, a voice, and a seat in the room.</p>
+          <h2>Get input while you weigh the options.</h2>
+          <p>Ask your Muse questions during the discussion.</p>
         </div>
         <div class="benefit">
           <div class="tick"></div>
-          <h2>Speaks and answers live</h2>
-          <p>Ask it, brief it, push back — it responds in the conversation, in real time.</p>
+          <h2>Let everyone engage with the answer.</h2>
+          <p>Clients and colleagues can hear, question, and respond to your Muse.</p>
         </div>
         <div class="benefit">
           <div class="tick"></div>
-          <h2>The follow-up, handled</h2>
-          <p>Notes, decisions, and next steps are captured before the call even ends.</p>
+          <h2>Keep the work moving afterward.</h2>
+          <p>Work through the meeting&rsquo;s next steps with your Muse.</p>
         </div>
       </section>
 
@@ -127,6 +134,7 @@
 
     <footer>
       <div class="maker">Muse in a Meeting &middot; by Moseley Innovations</div>
+      <div class="campaign">From Manual to Modern</div>
       <div class="tagline">AI &middot; Automation &middot; Content Systems &middot; Government Solutions</div>
     </footer>
   </div>

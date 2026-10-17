@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="Muse in a Meeting icon">
 <title>Muse in a Meeting icon</title>
 <defs><linearGradient id="teal" x1="0" y1="0" x2="0" y2="1">
-<stop offset="0" stop-color="#1cc7da"/><stop offset="1" stop-color="#0e93a6"/></linearGradient></defs>
-<g transform="translate(0,0) scale(1.0)"><path d="M62,26 H178 A42,42 0 0 1 220,68 V136 A42,42 0 0 1 178,178 H120 L68,214 V178 H62 A42,42 0 0 1 20,136 V68 A42,42 0 0 1 62,26 Z" fill="url(#teal)"/><text x="120" y="135" text-anchor="middle" font-family="'Noto Sans','Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="102" font-weight="800" fill="#ffffff">M</text></g>
+<stop offset="0" stop-color="#19D3C5"/><stop offset="1" stop-color="#0E9488"/></linearGradient></defs>
+<g transform="translate(0,0) scale(1.0)"><path d="M62,26 H178 A42,42 0 0 1 220,68 V136 A42,42 0 0 1 178,178 H120 L68,214 V178 H62 A42,42 0 0 1 20,136 V68 A42,42 0 0 1 62,26 Z" fill="url(#teal)"/><text x="120" y="135" text-anchor="middle" font-family="'Manrope','Noto Sans','Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="102" font-weight="800" fill="#ffffff">M</text></g>
 </svg>
