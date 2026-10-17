@@ -121,38 +121,88 @@ function bubble(cls, html, meta){
 const esc = s => s.replace(/[&<>"]/g, c =>
   ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
-/* ---------------- token + connection ---------------- */
-async function getToken(){
-  if (location.hash.startsWith("#tok=")){
-    try { return JSON.parse(atob(decodeURIComponent(
-      location.hash.slice(5)))); } catch(e){ log("bad #tok: " + e); }
-  }
-  try {
-    const r = await fetch("token.json", {cache: "no-store"});
-    if (r.ok) return await r.json();
-  } catch(e){ /* fall through */ }
-  throw new Error("no token: open this page with a #tok= link " +
-                  "or put token.json beside it");
+/* ---------------- auth + connection ----------------
+   Primary: Ably authUrl — the page fetches a FRESH signed
+   tokenRequest from the runner endpoint at load, and the Ably
+   library re-fetches automatically before the token expires.
+   No token rides the URL any more: a signed tokenRequest must
+   be exchanged almost immediately (Ably 40104 "Timestamp not
+   current" killed the #tok= pattern on 2026-10-17 — a request
+   minted on the VM was ~10 min old when tapped, and even a
+   150 s-old request is rejected) and its nonce is single-use
+   (40105 on a second exchange). #tok= survives only as a
+   fallback, and if fragment auth fails the page retries via
+   the endpoint on its own. */
+const AUTH_URL = "https://165.22.38.47.sslip.io:8443/lean-token";
+
+function fmtErr(sc){
+  const e = sc && sc.reason;
+  if (!e) return "no reason given";
+  return (e.message || String(e)) +
+         (e.code ? ` (Ably code ${e.code})` : "");
 }
+function connIs(state){ return ably && ably.connection.state === state; }
 
 let ably, upCh, ctlCh;
 async function connect(){
-  const token = await getToken();
-  ably = new Ably.Realtime({token, clientId: "howard-phone"});
+  let frag = null;
+  if (location.hash.startsWith("#tok=")){
+    try { frag = JSON.parse(atob(decodeURIComponent(
+      location.hash.slice(5)))); } catch(e){ log("bad #tok: " + e); }
+  }
+  if (frag){
+    log("auth: #tok= fragment (fallback path)");
+    startAbly({token: frag, clientId: "howard-phone"}, true);
+  } else {
+    log("auth: fresh token from endpoint");
+    startAbly({authUrl: AUTH_URL, clientId: "howard-phone"}, false);
+  }
+}
+function startAbly(opts, viaFragment){
+  if (ably){ try { ably.close(); } catch(e){} }
+  ably = new Ably.Realtime(opts);
   ably.connection.on("connected", () => {
     setPill("ok", "connected");
     log("ably connected");
     ping();
   });
-  ably.connection.on("failed", () =>
-    { setPill("bad", "failed"); log("ably connection failed"); });
+  ably.connection.on("failed", sc => {
+    setPill("bad", "failed");
+    log("ably connection FAILED: " + fmtErr(sc));
+    if (viaFragment){
+      log("fragment auth failed — retrying via auth endpoint");
+      startAbly({authUrl: AUTH_URL, clientId: "howard-phone"}, false);
+    }
+  });
+  ably.connection.on("disconnected", sc => {
+    setPill("bad", "offline");
+    log("ably disconnected: " + fmtErr(sc));
+  });
+  ably.connection.on("suspended", sc => {
+    setPill("bad", "suspended");
+    log("ably suspended: " + fmtErr(sc));
+  });
   upCh = ably.channels.get("lean-up");
   ctlCh = ably.channels.get("lean-ctl");
   const down = ably.channels.get("lean-down");
   down.subscribe(onDown);
 }
+/* Honest sends: publishing into a dead connection is NOT a
+   send. Nothing in this page logs "sent" unless the connection
+   is live at publish time; a miss logs NOT SENT with the state,
+   so the on-page log can never claim words reached Lash when
+   they did not. */
+function pub(ch, name, data, label, quiet){
+  if (!connIs("connected")){
+    if (!quiet) log(`NOT SENT (${label || name}) — connection is ` +
+      (ably ? ably.connection.state : "not started"));
+    return false;
+  }
+  ch.publish(name, data);
+  return true;
+}
 function ping(){
-  ctlCh.publish("signal", {kind: "PING", t_client: now()});
+  pub(ctlCh, "signal", {kind: "PING", t_client: now()}, "PING", true);
 }
 
 /* ---------------- Layer 1: signals ---------------- */
@@ -160,8 +210,8 @@ let lastBargeAt = 0, lastBargeCutId = null;
 function signal(kind, extra){
   const evt = Object.assign({kind, t_client: tBridge(),
     t_local: now()}, extra || {});
-  ctlCh.publish("signal", evt);
-  log(`signal ${kind} sent`);
+  if (pub(ctlCh, "signal", evt, "signal " + kind))
+    log(`signal ${kind} sent`);
   return evt;
 }
 
@@ -292,9 +342,10 @@ function pump(){
     playing = null;
     setPill("ok", "connected");
     if (!wasCut){
-      ctlCh.publish("signal",
+      pub(ctlCh, "signal",
         {kind: "HEARD_POS", idx: c.idx, played_ms: c.dur_ms,
-         dur_ms: c.dur_ms, final: true, t_client: tBridge()});
+         dur_ms: c.dur_ms, final: true, t_client: tBridge()},
+        "HEARD_POS");
     }
     pump();
   };
@@ -322,20 +373,21 @@ function doStop(cutId){
   // Everything queued but unplayed is unheard by definition.
   playQueue.length = 0;
   setPill("ok", "connected");
-  if (posEvt) ctlCh.publish("signal", posEvt);
+  if (posEvt) pub(ctlCh, "signal", posEvt, "HEARD_POS (cut)");
 }
 
 /* ---------------- Layers 0+2: speaking ---------------- */
 let draftBubble = null;
 function sendUtter(text, source, tSpeakEnd){
-  const t = now();
-  upCh.publish("utter", {text, source,
-    t_send: tBridge(), t_speak_end: tSpeakEnd || tBridge()});
+  const sent = pub(upCh, "utter", {text, source,
+    t_send: tBridge(), t_speak_end: tSpeakEnd || tBridge()},
+    "utter");
   bubble("me", esc(text),
+    !sent ? "you · NOT SENT — connection down" :
     source === "asr" ? "you · voice (draft ASR final)"
                      : "you · typed");
   if (draftBubble){ draftBubble.remove(); draftBubble = null; }
-  log(`utter sent (${source}): "${text.slice(0, 40)}"`);
+  if (sent) log(`utter sent (${source}): "${text.slice(0, 40)}"`);
 }
 
 /* Web Speech ASR (Layer 2) */
@@ -356,7 +408,9 @@ if (SR){
     } else {
       signal("SPEAK_START", {via: "asr"});
     }
-    setPill("listening", "listening");
+    if (connIs("connected")) setPill("listening", "listening");
+    else log("mic live (listening locally) — connection is " +
+             (ably ? ably.connection.state : "not started"));
   };
   recog.onspeechend = () => signal("SPEAK_END", {via: "asr"});
   recog.onresult = ev => {
@@ -371,8 +425,8 @@ if (SR){
       if (t - lastPartialAt > 0.12){
         lastPartialAt = t;
         partialCount++;
-        upCh.publish("partial", {text: interim, draft: true,
-          t_send: tBridge()});
+        pub(upCh, "partial", {text: interim, draft: true,
+          t_send: tBridge()}, "partial", true);
         if (!draftBubble)
           draftBubble = bubble("me draft", "", "draft…");
         draftBubble.firstChild.textContent = interim;
@@ -447,9 +501,10 @@ $("typeInput").addEventListener("keydown", ev => {
 });
 
 connect().catch(e => {
-  setPill("bad", "no token");
-  sysNote("Could not start: " + e.message);
-  log("connect failed: " + e.message);
+  setPill("bad", "error");
+  sysNote("Could not start: " + (e.message || e));
+  log("connect failed: " + (e.message || e) +
+      (e.code ? ` (Ably code ${e.code})` : ""));
 });
 document.addEventListener("pointerdown", () => audioCtx(),
   {once: true});
