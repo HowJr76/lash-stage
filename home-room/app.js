@@ -10,6 +10,9 @@
  *   playback.stopped  { played_ms, spoken_until_word, reason } agent -> client
  *   stage.state       { state: listening|thinking|speaking, focus }
  *   turn.endpoint     { participant_id, final, text }         either way
+ *   said.transcript   { clause_idx, said, match }  proof of hearing:
+ *                               the worker's transcription of the
+ *                               audio it actually played (chip)
  *   session.control   { cmd: leave|mute_agent, by }           either way
  *   user.text         { text }  client-originated typed text (extension,
  *                               documented in README.md)
@@ -265,6 +268,12 @@ function paintBubble(entry, node) {
         chip.textContent = c.cutNote;
         chips.appendChild(chip);
       }
+      if (c.saidNote) {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = c.saidNote;
+        chips.appendChild(chip);
+      }
     }
   } else {
     body.textContent = entry.text || '';
@@ -355,6 +364,23 @@ function handlePacket(pkt, fromIdentity) {
         }
       }
       refreshPresence();
+      break;
+    }
+    case 'said.transcript': {
+      // Proof of hearing: the worker transcribed the audio it
+      // actually played into the room; chip the result onto the
+      // clause so the log shows what was heard, not just sent.
+      const t = pkt.turn_id ? turns.get(pkt.turn_id) : null;
+      if (t) {
+        const clause = t.clauses.get(pkt.clause_idx);
+        if (clause) {
+          clause.saidNote = pkt.match ? '✓ heard as written'
+            : 'heard: “' + (pkt.said || '') + '”';
+          t.entry.clauses = [...t.clauses.values()].sort((a, b) => a.idx - b.idx);
+          paintBubble(t.entry, t.entry._node);
+          saveThread(); stickScroll();
+        }
+      }
       break;
     }
     case 'turn.endpoint': {
