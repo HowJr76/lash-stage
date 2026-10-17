@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meeting Room · Moseley Innovations</title>
+<meta name="description" content="Moseley Innovations virtual meeting room.">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: radial-gradient(1200px 700px at 50% -10%, #0d2c47 0%, #081c30 45%, #050f1c 100%);
+    color: #e8eef2;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px 16px;
+  }
+  .card {
+    width: 100%; max-width: 520px; text-align: center;
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(23,182,201,.35);
+    border-radius: 20px;
+    padding: 44px 32px 36px;
+    box-shadow: 0 24px 60px rgba(0,0,0,.45);
+  }
+  .logo {
+    width: 120px; height: 120px; border-radius: 24px;
+    border: 2px solid rgba(23,182,201,.55);
+    box-shadow: 0 0 0 6px rgba(23,182,201,.12), 0 10px 30px rgba(0,0,0,.4);
+  }
+  .wordmark {
+    margin: 22px 0 2px; font-size: 26px; font-weight: 700;
+    letter-spacing: .14em; color: #ffffff;
+  }
+  .wordmark .accent { color: #17b6c9; }
+  .campaign {
+    margin: 4px 0 0; font-size: 12px; font-weight: 600;
+    letter-spacing: .32em; color: #17b6c9; text-transform: uppercase;
+  }
+  .rule {
+    width: 64px; height: 2px; margin: 26px auto;
+    background: linear-gradient(90deg, transparent, #17b6c9, transparent);
+  }
+  h1 { margin: 0 0 8px; font-size: 30px; font-weight: 650; }
+  .sub { margin: 0 0 30px; font-size: 16px; line-height: 1.5; color: #9fb2c1; }
+  .join {
+    display: inline-block; width: 100%; max-width: 340px;
+    padding: 16px 24px; border-radius: 12px;
+    background: linear-gradient(180deg, #1cc7da, #0e93a6);
+    color: #04222b; font-size: 18px; font-weight: 700; letter-spacing: .02em;
+    text-decoration: none;
+    box-shadow: 0 10px 26px rgba(23,182,201,.35);
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .join:hover, .join:focus { transform: translateY(-1px); box-shadow: 0 14px 32px rgba(23,182,201,.45); }
+  .note { margin: 18px 0 0; font-size: 13px; color: #7f95a7; }
+  .tagline {
+    margin: 34px 0 0; font-size: 11px; font-weight: 600;
+    letter-spacing: .22em; color: #5f7d92; text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+  <main class="card">
+    <img class="logo" src="mi-logo.jpg" alt="Moseley Innovations logo">
+    <div class="wordmark">MOSELEY <span class="accent">INNOVATIONS</span></div>
+    <p class="campaign">From Manual to Modern</p>
+    <div class="rule"></div>
+    <h1>Meeting Room</h1>
+    <p class="sub">You&rsquo;re invited to a Moseley Innovations video meeting.<br>Tap below to join the room.</p>
+    <a class="join" href="https://meet.google.com/zau-dfpp-hxp">Join the Meeting</a>
+    <p class="note">Opens Google Meet in your browser or the Meet app.</p>
+    <p class="tagline">AI &middot; Automation &middot; Content Systems &middot; Government Solutions</p>
+  </main>
+</body>
+</html>
