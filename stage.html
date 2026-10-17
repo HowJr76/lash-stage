@@ -854,6 +854,48 @@ window.__lashPuppet = {
   state(name) { faceShow(name); },
 };
 
+// ---- captions: ONLY what is actually being said ----
+// Howard's directive (2026-10-16 late, after the bdca070d84 live
+// test): the stage showed composed text he could read before — and
+// without — it being spoken, so a cut-off line left text on screen
+// that was never said. The rule, enforced at every caption write:
+//   * a line's text appears ONLY when its audio starts playing
+//     (play() resolved on the audio lane; utterance onstart on the
+//     text lane) — never at queue time, never while queued, never
+//     during the by-reference fetch;
+//   * when playback is stopped early (barge-in / flush), the caption
+//     is truncated to the spoken portion — the same word-proportional
+//     split the bridge computes from this stage's played-duration
+//     accounting (currentAudio.currentTime / duration) — and with
+//     no trustworthy position (text lane, no clock) it is cleared:
+//     unaccounted text was never shown as said;
+//   * a line that plays out in full keeps its caption (it WAS said)
+//     until the next line's audio starts.
+function spokenCaptionPortion(item) {
+  if (!item || !item.text) return '';
+  if (!currentAudio) return '';
+  let pos = null, dur = null;
+  try {
+    if (isFinite(currentAudio.currentTime))
+      pos = currentAudio.currentTime;
+    if (isFinite(currentAudio.duration))
+      dur = currentAudio.duration;
+  } catch (e) { /* no clock: nothing counts as shown-said */ }
+  if (pos === null || !dur) return '';
+  const words = item.text.split(/\s+/).filter(Boolean);
+  if (!words.length) return '';
+  const frac = Math.min(1, Math.max(0, pos / dur));
+  const n = Math.round(frac * words.length);
+  return words.slice(0, n).join(' ');
+}
+function showCaption(item) {
+  // Audio for this line is actually sounding — only now may its
+  // text appear. A line stopped during its start-up (barge-in
+  // landed inside the play() await) never gets captioned at all.
+  if (currentItem === item && playing)
+    captionEl.textContent = item.text;
+}
+
 // ---- playback ----
 async function playNext() {
   if (playing || queue.length === 0) return;
@@ -862,7 +904,6 @@ async function playNext() {
   playing = true;
   currentItem = item;
   currentText = item.text;
-  captionEl.textContent = item.text;
   face.className = 'speaking';
   faceTalk(true);
   setStatus('speaking');
@@ -879,6 +920,9 @@ async function playNext() {
       u.voice = v;
       u.rate = item.rate || 1.0;
       u.pitch = item.pitch ?? 1.0;
+      // Caption only when the synthesis actually starts speaking —
+      // never at queue/speak() call time (see the caption rule).
+      u.onstart = () => showCaption(item);
       u.onend = () => {
         if (upCh) upCh.publish('control',
           {type: 'speech_done', seq: item.seq, ok: true});
@@ -906,9 +950,15 @@ async function playNext() {
     currentAudio.onerror = () => donePlaying(item);
     puppetLineStart(item);
     await currentAudio.play();
+    // play() resolved: the audio is actually sounding NOW — this is
+    // the first moment the line's text may appear (caption rule).
+    showCaption(item);
   } catch (e) { donePlaying(item); }
 }
 function donePlaying(item) {
+  // Played out in full: the caption stays — every word of it was
+  // actually said (caption rule). Early stops go through
+  // stopPlayback(), which truncates instead.
   emitPlayEnd(item, false);
   playing = false;
   currentItem = null;
@@ -922,11 +972,20 @@ function donePlaying(item) {
 }
 function stopPlayback() {
   queue.length = 0;
+  // Caption rule (Howard, 2026-10-16): the unspoken remainder of a
+  // cut line must never stay on screen. Read the spoken portion
+  // from the audio element's own clock BEFORE anything is torn
+  // down — the same position emitPlayEnd reports to the bridge —
+  // and leave only that much text showing ('' when there is no
+  // trustworthy position: the text lane has no clock, so a cut
+  // text-lane line's caption clears outright).
+  const spokenCaption = spokenCaptionPortion(currentItem);
   // Playback accounting: a cut line still gets its play_end — with
   // stopped=true and the position where it died — BEFORE the audio
   // element is torn down. A stop the bridge never hears about would
   // leave the brain believing the whole line was said.
   emitPlayEnd(currentItem, true);
+  captionEl.textContent = spokenCaption;
   currentItem = null;
   try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch {}
   if (currentAudio) { try { currentAudio.pause(); } catch {} currentAudio = null; }
