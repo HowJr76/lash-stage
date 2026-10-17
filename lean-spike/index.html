@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0d1117">
+<title>Lean Spike — Lash</title>
+<script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161c26; --panel2:#1d2635; --line:#2a3648;
+    --ink:#e8eef6; --dim:#93a3b8; --faint:#5d6f86;
+    --accent:#ffb454; --accent-ink:#23180a;
+    --ok:#3fb97c; --warn:#e5b83b; --bad:#e5604f;
+    --bubble-lash:#1d2635; --bubble-me:#2c4a73;
+    --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{margin:0; background:var(--bg); color:var(--ink);
+    font:16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display:flex; flex-direction:column; height:100dvh; overflow:hidden}
+  header{padding:calc(10px + var(--sat)) 16px 10px; background:var(--panel);
+    border-bottom:1px solid var(--line); flex:0 0 auto}
+  #whoRow{display:flex; align-items:center; gap:9px; flex-wrap:wrap}
+  #whoName{font-size:20px; font-weight:700}
+  #pill{font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.8px;
+    padding:3px 9px; border-radius:999px; border:1px solid var(--line); color:var(--dim)}
+  #pill[data-p="ok"]{color:var(--ok); border-color:var(--ok)}
+  #pill[data-p="bad"]{color:var(--bad); border-color:var(--bad)}
+  #pill[data-p="speaking"]{color:var(--accent); border-color:var(--accent)}
+  #pill[data-p="listening"]{color:#58b6e6; border-color:#58b6e6}
+  #statusLine{color:var(--dim); font-size:13.5px; margin-top:3px}
+  main{flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px 12px 8px}
+  .msg{max-width:86%; padding:9px 12px; border-radius:16px; margin:0 0 9px; clear:both; overflow-wrap:anywhere}
+  .msg.lash{background:var(--bubble-lash); float:left; border-bottom-left-radius:5px}
+  .msg.me{background:var(--bubble-me); float:right; border-bottom-right-radius:5px}
+  .msg .meta{display:block; font-size:11px; color:var(--faint); margin-top:5px}
+  .msg .unheard{opacity:.45; text-decoration:line-through}
+  .msg.draft{opacity:.65; font-style:italic}
+  .sys{clear:both; text-align:center; color:var(--faint); font-size:12.5px; margin:12px 8px}
+  #logPanel{flex:0 0 auto; max-height:26dvh; overflow-y:auto; background:#0a0e14;
+    border-top:1px solid var(--line); padding:8px 12px;
+    font:11px/1.55 ui-monospace, Menlo, monospace; color:#8fae80; white-space:pre-wrap; word-break:break-all}
+  #composer{display:flex; gap:8px; padding:10px 12px; background:var(--panel); border-top:1px solid var(--line)}
+  #typeInput{flex:1 1 auto; min-height:48px; background:var(--panel2); color:var(--ink);
+    border:1px solid var(--line); border-radius:12px; padding:12px; font:inherit; font-size:16px}
+  #sendBtn{flex:0 0 auto; min-width:70px; border:0; border-radius:12px; background:var(--accent);
+    color:var(--accent-ink); font-weight:700; font-size:16px}
+  #controls{flex:0 0 auto; background:var(--panel); border-top:1px solid var(--line);
+    padding:10px 12px calc(10px + var(--sab)); display:flex; gap:9px}
+  .ctl{flex:1 1 0; min-height:62px; border-radius:14px; border:1px solid var(--line);
+    background:var(--panel2); color:var(--ink); font-size:16.5px; font-weight:650;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;
+    cursor:pointer; touch-action:none; user-select:none; -webkit-user-select:none}
+  .ctl small{font-size:11px; color:var(--dim); font-weight:500}
+  .ctl.primary{background:var(--accent); color:var(--accent-ink); border-color:var(--accent); flex:1.4 1 0}
+  .ctl.primary small{color:#5c4318}
+  .ctl.live{background:var(--ok); border-color:var(--ok); color:#07251a}
+  .ctl.danger{color:#ff9c8f}
+  .ctl:disabled{opacity:.38}
+</style>
+</head>
+<body>
+
+<header>
+  <div id="whoRow"><span id="whoName">Lash — lean spike</span><span id="pill" data-p="">connecting</span></div>
+  <div id="statusLine">The Nova-link with a voice skin: text spine, parallel cues, streamed mouth.</div>
+</header>
+
+<main id="threadWrap"><div id="thread"></div></main>
+
+<div id="logPanel" aria-label="timing log"></div>
+
+<div id="composer">
+  <input id="typeInput" type="text" placeholder="Type instead — same conversation…" enterkeyhint="send" autocomplete="off">
+  <button id="sendBtn" type="button">Send</button>
+</div>
+
+<div id="controls">
+  <button class="ctl primary" id="talkBtn" type="button">Hold to talk<small>or just start talking</small></button>
+  <button class="ctl danger" id="cutBtn" type="button">⚡ Interrupt<small>barge in now</small></button>
+</div>
+
+<script>
+"use strict";
+/* Lean spike client — Layers 0-3 in one page.
+   L0 text spine (lean-up 'utter'), L1 parallel cues (lean-ctl
+   'signal'), L2 on-device draft ASR (Web Speech; partials stream as
+   DRAFT, finals become utterances), L3 streamed mouth (lean-down
+   clause/audio frames, Web Audio playback, HEARD_POS reports).   */
+
+const $ = id => document.getElementById(id);
+const thread = $("thread"), logEl = $("logPanel"), pill = $("pill"),
+      statusLine = $("statusLine");
+
+let clockOffset = 0;            // bridge_time - local_time (seconds)
+const now = () => Date.now() / 1000;
+const tBridge = () => now() + clockOffset;
+function log(msg){
+  const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  logEl.textContent += line + "\n";
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function setPill(p, txt){ pill.dataset.p = p; pill.textContent = txt; }
+function sysNote(t){
+  const d = document.createElement("div");
+  d.className = "sys"; d.textContent = t; thread.appendChild(d);
+  thread.parentElement.scrollTop = 1e9;
+}
+function bubble(cls, html, meta){
+  const d = document.createElement("div");
+  d.className = "msg " + cls;
+  d.innerHTML = html;
+  if (meta){ const s = document.createElement("span");
+    s.className = "meta"; s.textContent = meta; d.appendChild(s); }
+  thread.appendChild(d);
+  thread.parentElement.scrollTop = 1e9;
+  return d;
+}
+const esc = s => s.replace(/[&<>"]/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* ---------------- token + connection ---------------- */
+async function getToken(){
+  if (location.hash.startsWith("#tok=")){
+    try { return JSON.parse(atob(decodeURIComponent(
+      location.hash.slice(5)))); } catch(e){ log("bad #tok: " + e); }
+  }
+  try {
+    const r = await fetch("token.json", {cache: "no-store"});
+    if (r.ok) return await r.json();
+  } catch(e){ /* fall through */ }
+  throw new Error("no token: open this page with a #tok= link " +
+                  "or put token.json beside it");
+}
+
+let ably, upCh, ctlCh;
+async function connect(){
+  const token = await getToken();
+  ably = new Ably.Realtime({token, clientId: "howard-phone"});
+  ably.connection.on("connected", () => {
+    setPill("ok", "connected");
+    log("ably connected");
+    ping();
+  });
+  ably.connection.on("failed", () =>
+    { setPill("bad", "failed"); log("ably connection failed"); });
+  upCh = ably.channels.get("lean-up");
+  ctlCh = ably.channels.get("lean-ctl");
+  const down = ably.channels.get("lean-down");
+  down.subscribe(onDown);
+}
+function ping(){
+  ctlCh.publish("signal", {kind: "PING", t_client: now()});
+}
+
+/* ---------------- Layer 1: signals ---------------- */
+let lastBargeAt = 0, lastBargeCutId = null;
+function signal(kind, extra){
+  const evt = Object.assign({kind, t_client: tBridge(),
+    t_local: now()}, extra || {});
+  ctlCh.publish("signal", evt);
+  log(`signal ${kind} sent`);
+  return evt;
+}
+
+/* ---------------- Layer 3: playback engine ---------------- */
+let actx = null;
+function audioCtx(){
+  if (!actx) actx = new (window.AudioContext ||
+    window.webkitAudioContext)();
+  if (actx.state === "suspended") actx.resume();
+  return actx;
+}
+const clauses = new Map();      // cid -> rec
+const playQueue = [];           // cids ready, in order
+let playing = null;             // {cid, idx, source, startCtx, dur}
+let turnBubbles = new Map();    // turn -> bubble element
+let currentTurn = null;
+let firstSoundPending = null;   // {turn, t_clause_recv} for A readout
+
+function onDown(m){
+  let d; try { d = JSON.parse(m.data); } catch(e){ return; }
+  if (m.name === "pong"){
+    const rtt = now() - d.t0;
+    clockOffset = d.t_bridge_recv - (d.t0 + rtt / 2);
+    log(`clock offset ${Math.round(clockOffset * 1000)} ms ` +
+        `(rtt ${Math.round(rtt * 1000)} ms)`);
+    return;
+  }
+  if (m.name === "note"){
+    if (d.type === "bridge-online")
+      sysNote("bridge online — session " + d.session);
+    return;
+  }
+  if (m.name === "clause"){
+    clauses.set(d.cid, {turn: d.turn, idx: d.idx, text: d.text,
+      frames: [], buffer: null, dur_ms: null});
+    currentTurn = d.turn;
+    if (!turnBubbles.has(d.turn)){
+      turnBubbles.set(d.turn, bubble("lash", "", "Lash · lean"));
+    }
+    const b = turnBubbles.get(d.turn);
+    const span = document.createElement("span");
+    span.id = "cl-" + d.cid; span.textContent =
+      (b.textContent ? " " : "") + d.text;
+    b.appendChild(span);
+    firstSoundPending = {turn: d.turn, idx: d.idx,
+      t_clause: now()};
+    log(`clause ${d.idx} received: "${d.text.slice(0, 40)}…"`);
+    return;
+  }
+  if (m.name === "audio"){
+    const c = clauses.get(d.cid);
+    if (!c) return;
+    if (firstSoundPending && firstSoundPending.turn === c.turn
+        && c.idx === firstSoundPending.idx){
+      log(`first audio frame for clause ${c.idx}: ` +
+          `${Math.round((now() - firstSoundPending.t_clause)
+          * 1000)} ms after clause text`);
+    }
+    const bin = atob(d.b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] =
+      bin.charCodeAt(i);
+    c.frames.push(bytes);
+    return;
+  }
+  if (m.name === "audio-end"){
+    const c = clauses.get(d.cid);
+    if (!c) return;
+    const total = c.frames.reduce((a, f) => a + f.length, 0);
+    const buf = new Uint8Array(total);
+    let off = 0;
+    for (const f of c.frames){ buf.set(f, off); off += f.length; }
+    audioCtx().decodeAudioData(buf.buffer.slice(0),
+      decoded => {
+        c.buffer = decoded;
+        c.dur_ms = Math.round(decoded.duration * 1000);
+        playQueue.push(d.cid);
+        pump();
+      },
+      err => log("decode failed for " + d.cid + ": " + err));
+    return;
+  }
+  if (m.name === "stop"){
+    lastBargeCutId = d.cut_id;
+    log(`stop received (signal→stop ` +
+        `${Math.round((now() - (d.t_send - 0)) * 1000)} ms ` +
+        `bridge-side stamp)`);
+    doStop(d.cut_id);
+    return;
+  }
+  if (m.name === "cut-final"){
+    log(`cut final — spoken: "${d.spoken.slice(0, 50)}" · ` +
+        `unheard: "${d.unheard.slice(0, 50)}"`);
+    if (currentTurn && turnBubbles.has(currentTurn)){
+      const b = turnBubbles.get(currentTurn);
+      b.innerHTML = esc(d.spoken) +
+        (d.unheard ? ` <span class="unheard">${esc(d.unheard)}` +
+                     `</span>` : "");
+      const s = document.createElement("span");
+      s.className = "meta"; s.textContent = "Lash · cut off here";
+      b.appendChild(s);
+    }
+    return;
+  }
+}
+
+function pump(){
+  if (playing || !playQueue.length) return;
+  const cid = playQueue.shift();
+  const c = clauses.get(cid);
+  if (!c || !c.buffer){ pump(); return; }
+  const ctx = audioCtx();
+  const src = ctx.createBufferSource();
+  src.buffer = c.buffer;
+  src.connect(ctx.destination);
+  playing = {cid, idx: c.idx, source: src,
+    startCtx: ctx.currentTime, dur_ms: c.dur_ms, cut: false};
+  setPill("speaking", "speaking");
+  if (firstSoundPending && firstSoundPending.turn === c.turn){
+    log(`A: clause ${c.idx} SOUND STARTS — ` +
+        `${Math.round((now() - firstSoundPending.t_clause)
+        * 1000)} ms after its text arrived`);
+    firstSoundPending = null;
+  }
+  src.onended = () => {
+    if (!playing || playing.cid !== cid) return;
+    const wasCut = playing.cut;
+    playing = null;
+    setPill("ok", "connected");
+    if (!wasCut){
+      ctlCh.publish("signal",
+        {kind: "HEARD_POS", idx: c.idx, played_ms: c.dur_ms,
+         dur_ms: c.dur_ms, final: true, t_client: tBridge()});
+    }
+    pump();
+  };
+  src.start();
+}
+
+function doStop(cutId){
+  const tStop = now();
+  let posEvt = null;
+  if (playing){
+    const p = playing;
+    p.cut = true;
+    const played = Math.max(0, Math.min(p.dur_ms,
+      Math.round((audioCtx().currentTime - p.startCtx) * 1000)));
+    try { p.source.stop(); } catch(e){}
+    try { p.source.disconnect(); } catch(e){}
+    posEvt = {kind: "HEARD_POS", idx: p.idx, played_ms: played,
+      dur_ms: p.dur_ms, final: false, cut: true,
+      cut_id: cutId || lastBargeCutId,
+      t_client: tBridge()};
+    playing = null;
+    log(`audio halted ${Math.round((now() - tStop) * 1000)} ms ` +
+        `after stop; heard ${played} ms of clause ${p.idx}`);
+  }
+  // Everything queued but unplayed is unheard by definition.
+  playQueue.length = 0;
+  setPill("ok", "connected");
+  if (posEvt) ctlCh.publish("signal", posEvt);
+}
+
+/* ---------------- Layers 0+2: speaking ---------------- */
+let draftBubble = null;
+function sendUtter(text, source, tSpeakEnd){
+  const t = now();
+  upCh.publish("utter", {text, source,
+    t_send: tBridge(), t_speak_end: tSpeakEnd || tBridge()});
+  bubble("me", esc(text),
+    source === "asr" ? "you · voice (draft ASR final)"
+                     : "you · typed");
+  if (draftBubble){ draftBubble.remove(); draftBubble = null; }
+  log(`utter sent (${source}): "${text.slice(0, 40)}"`);
+}
+
+/* Web Speech ASR (Layer 2) */
+const SR = window.SpeechRecognition ||
+           window.webkitSpeechRecognition;
+let recog = null, recogOn = false, lastPartialAt = 0,
+    partialCount = 0;
+if (SR){
+  recog = new SR();
+  recog.continuous = true;
+  recog.interimResults = true;
+  recog.lang = "en-US";
+  recog.onspeechstart = () => {
+    if (playing || playQueue.length){
+      lastBargeAt = now();
+      signal("BARGE_IN", {via: "speechstart"});
+      log("speechstart during playback → BARGE_IN");
+    } else {
+      signal("SPEAK_START", {via: "asr"});
+    }
+    setPill("listening", "listening");
+  };
+  recog.onspeechend = () => signal("SPEAK_END", {via: "asr"});
+  recog.onresult = ev => {
+    let interim = "", finalText = "";
+    for (let i = ev.resultIndex; i < ev.results.length; i++){
+      const r = ev.results[i];
+      if (r.isFinal) finalText += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    if (interim){
+      const t = now();
+      if (t - lastPartialAt > 0.12){
+        lastPartialAt = t;
+        partialCount++;
+        upCh.publish("partial", {text: interim, draft: true,
+          t_send: tBridge()});
+        if (!draftBubble)
+          draftBubble = bubble("me draft", "", "draft…");
+        draftBubble.firstChild.textContent = interim;
+      }
+    }
+    if (finalText.trim()){
+      sendUtter(finalText.trim(), "asr");
+    }
+  };
+  recog.onend = () => { if (recogOn){
+    try { recog.start(); } catch(e){} } };
+  recog.onerror = ev => {
+    if (ev.error === "not-allowed")
+      sysNote("Mic permission denied — typed input still works.");
+  };
+} else {
+  sysNote("This browser has no Web Speech recognition — typed " +
+          "input and the hold-to-talk signals still work; ASR " +
+          "draft layer is off.");
+}
+function startListening(){
+  if (!recog || recogOn) return;
+  recogOn = true;
+  try { recog.start(); } catch(e){}
+}
+startListening();
+
+/* Hold-to-talk (signals work with or without ASR) */
+const talkBtn = $("talkBtn");
+let pttDown = false;
+talkBtn.addEventListener("pointerdown", ev => {
+  ev.preventDefault();
+  audioCtx();
+  startListening();
+  pttDown = true;
+  talkBtn.classList.add("live");
+  if (playing || playQueue.length){
+    lastBargeAt = now();
+    signal("BARGE_IN", {via: "ptt"});
+  } else {
+    signal("SPEAK_START", {via: "ptt"});
+  }
+});
+const pttUp = () => {
+  if (!pttDown) return;
+  pttDown = false;
+  talkBtn.classList.remove("live");
+  signal("SPEAK_END", {via: "ptt"});
+};
+talkBtn.addEventListener("pointerup", pttUp);
+talkBtn.addEventListener("pointercancel", pttUp);
+talkBtn.addEventListener("pointerleave", pttUp);
+
+/* Manual interrupt */
+$("cutBtn").addEventListener("click", () => {
+  audioCtx();
+  lastBargeAt = now();
+  signal("BARGE_IN", {via: "button"});
+});
+
+/* Typed path (Layer 0 in its purest form) */
+function sendTyped(){
+  const inp = $("typeInput");
+  const text = inp.value.trim();
+  if (!text) return;
+  inp.value = "";
+  sendUtter(text, "typed");
+}
+$("sendBtn").addEventListener("click", sendTyped);
+$("typeInput").addEventListener("keydown", ev => {
+  if (ev.key === "Enter") sendTyped();
+});
+
+connect().catch(e => {
+  setPill("bad", "no token");
+  sysNote("Could not start: " + e.message);
+  log("connect failed: " + e.message);
+});
+document.addEventListener("pointerdown", () => audioCtx(),
+  {once: true});
+</script>
+</body>
+</html>
