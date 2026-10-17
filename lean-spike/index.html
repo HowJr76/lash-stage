@@ -59,14 +59,44 @@
   .ctl.live{background:var(--ok); border-color:var(--ok); color:#07251a}
   .ctl.danger{color:#ff9c8f}
   .ctl:disabled{opacity:.38}
+  #wtBtn{margin-left:auto; flex:0 0 auto; border:1px solid var(--line);
+    background:var(--panel2); color:var(--ink); border-radius:999px;
+    padding:5px 12px; font-size:13px; font-weight:650; cursor:pointer}
+  #wtBtn.on{border-color:var(--accent); color:var(--accent)}
+  #wtPanel{flex:0 0 auto; background:#11161f; border-bottom:1px solid var(--line);
+    padding:12px 14px; display:none}
+  #wtPanel.open{display:block}
+  #wtProg{font-size:11.5px; font-weight:700; text-transform:uppercase;
+    letter-spacing:.8px; color:var(--accent); margin-bottom:4px}
+  #wtTitle{font-size:17px; font-weight:700; margin-bottom:4px}
+  #wtBody{color:var(--ink); font-size:14.5px; line-height:1.5}
+  #wtBody .say{color:#9fd3a8}
+  #wtRec{font-size:12.5px; color:var(--dim); margin-top:7px}
+  #wtRec .dot{color:var(--bad); font-weight:700}
+  #wtRow{display:flex; gap:8px; margin-top:10px}
+  .wtb{flex:1 1 0; min-height:46px; border-radius:11px; border:1px solid var(--line);
+    background:var(--panel2); color:var(--ink); font-size:15px; font-weight:650; cursor:pointer}
+  .wtb.primary{background:var(--accent); color:var(--accent-ink); border-color:var(--accent)}
+  .wtb:disabled{opacity:.38}
+  #wtUp{font:11.5px/1.6 ui-monospace, Menlo, monospace; color:#8fae80;
+    white-space:pre-wrap; margin-top:8px}
 </style>
 </head>
 <body>
 
 <header>
-  <div id="whoRow"><span id="whoName">Lash — lean spike</span><span id="pill" data-p="">connecting</span></div>
+  <div id="whoRow"><span id="whoName">Lash — lean spike</span><span id="pill" data-p="">connecting</span><button id="wtBtn" type="button">▶ Walkthrough test</button></div>
   <div id="statusLine">The Nova-link with a voice skin: text spine, parallel cues, streamed mouth.</div>
 </header>
+
+<div id="wtPanel" aria-label="walkthrough test">
+  <div id="wtProg"></div>
+  <div id="wtTitle"></div>
+  <div id="wtBody"></div>
+  <div id="wtRec"></div>
+  <div id="wtRow"></div>
+  <div id="wtUp"></div>
+</div>
 
 <main id="threadWrap"><div id="thread"></div></main>
 
@@ -93,6 +123,15 @@
 const $ = id => document.getElementById(id);
 const thread = $("thread"), logEl = $("logPanel"), pill = $("pill"),
       statusLine = $("statusLine");
+
+/* Rig params: ?ch=<prefix> selects an isolated channel set
+   (lean-up/-ctl/-down by default) so a throwaway bridge can be
+   verified without touching a live session; ?rec=pcm forces the
+   WebAudio WAV mic fallback, ?rec=off disables mic capture. */
+const _qs = new URLSearchParams(location.search);
+const CH_PREFIX = /^[a-z0-9-]+$/.test(_qs.get("ch") || "")
+  ? _qs.get("ch") : "lean";
+const REC_MODE = _qs.get("rec") || "auto";
 
 let clockOffset = 0;            // bridge_time - local_time (seconds)
 const now = () => Date.now() / 1000;
@@ -182,9 +221,9 @@ function startAbly(opts, viaFragment){
     setPill("bad", "suspended");
     log("ably suspended: " + fmtErr(sc));
   });
-  upCh = ably.channels.get("lean-up");
-  ctlCh = ably.channels.get("lean-ctl");
-  const down = ably.channels.get("lean-down");
+  upCh = ably.channels.get(CH_PREFIX + "-up");
+  ctlCh = ably.channels.get(CH_PREFIX + "-ctl");
+  const down = ably.channels.get(CH_PREFIX + "-down");
   down.subscribe(onDown);
 }
 /* Honest sends: publishing into a dead connection is NOT a
@@ -219,7 +258,41 @@ function signal(kind, extra){
     t_local: now()}, extra || {});
   if (pub(ctlCh, "signal", evt, "signal " + kind))
     log(`signal ${kind} sent`);
+  recEvent("signal", {kind, via: (extra && extra.via) || null,
+    sent: connIs("connected")});
   return evt;
+}
+
+/* ---------------- both-ends recording (walkthrough) --------
+   REC is the client half of Howard's ground-truth discipline:
+   while a walkthrough runs, the page keeps (a) his mic audio,
+   (b) the mouth audio EXACTLY as received — the same MP3 frames
+   the player decoded, archived per clause — and (c) a stamped
+   transcript of everything: ASR drafts/finals, signals, clause
+   arrivals, play positions, step transitions, clock offsets.
+   At the end it all uploads to the runner keyed by the bridge
+   session id, where analyze_session.py lays it beside the
+   server archive. Nothing here gates or delays the live path:
+   recording observes, it never blocks. */
+const REC = {
+  active: false, session: null, startedWall: null,
+  events: [], steps: [], pongs: [], partialCountAtStart: 0,
+  mic: {mode: null, mime: null, error: null, blob: null,
+        t_start: null, t_stop: null, sample_rate: null},
+};
+function recEvent(k, fields){
+  if (!REC.active) return;
+  REC.events.push(Object.assign({k, t_local_ms: Date.now(),
+    t_bridge_ms: Math.round(tBridge() * 1000)}, fields || {}));
+}
+function heardThroughWord(c){
+  if (!c || !c.text || !c.dur_ms) return null;
+  const played = (typeof c.played_ms === "number")
+    ? c.played_ms : 0;
+  const words = c.text.split(/\s+/).filter(Boolean);
+  const n = Math.max(0, Math.min(words.length,
+    Math.round(words.length * played / c.dur_ms)));
+  return words.slice(0, n).join(" ");
 }
 
 /* ---------------- Layer 3: playback engine ---------------- */
@@ -242,18 +315,30 @@ function onDown(m){
   if (m.name === "pong"){
     const rtt = now() - d.t0;
     clockOffset = d.t_bridge_recv - (d.t0 + rtt / 2);
+    REC.pongs.push({t_local_ms: Date.now(),
+      offset_ms: Math.round(clockOffset * 1000),
+      rtt_ms: Math.round(rtt * 1000)});
+    recEvent("pong", {offset_ms: Math.round(clockOffset * 1000),
+      rtt_ms: Math.round(rtt * 1000)});
     log(`clock offset ${Math.round(clockOffset * 1000)} ms ` +
         `(rtt ${Math.round(rtt * 1000)} ms)`);
     return;
   }
   if (m.name === "note"){
-    if (d.type === "bridge-online")
+    if (d.type === "bridge-online"){
+      REC.session = d.session;
       sysNote("bridge online — session " + d.session);
+    }
     return;
   }
   if (m.name === "clause"){
     clauses.set(d.cid, {turn: d.turn, idx: d.idx, text: d.text,
-      frames: [], buffer: null, dur_ms: null});
+      frames: [], buffer: null, dur_ms: null,
+      t_recv_ms: Date.now(), t_first_frame_ms: null,
+      t_audio_end_ms: null, t_play_start_ms: null,
+      t_play_end_ms: null, played_ms: null, cut: false});
+    recEvent("clause_recv", {cid: d.cid, turn: d.turn, idx: d.idx,
+      text: d.text});
     currentTurn = d.turn;
     if (!turnBubbles.has(d.turn)){
       turnBubbles.set(d.turn, bubble("lash", "", "Lash · lean"));
@@ -271,6 +356,10 @@ function onDown(m){
   if (m.name === "audio"){
     const c = clauses.get(d.cid);
     if (!c) return;
+    if (c.t_first_frame_ms === null){
+      c.t_first_frame_ms = Date.now();
+      recEvent("audio_first_frame", {cid: d.cid, idx: c.idx});
+    }
     if (firstSoundPending && firstSoundPending.turn === c.turn
         && c.idx === firstSoundPending.idx){
       log(`first audio frame for clause ${c.idx}: ` +
@@ -287,6 +376,9 @@ function onDown(m){
   if (m.name === "audio-end"){
     const c = clauses.get(d.cid);
     if (!c) return;
+    c.t_audio_end_ms = Date.now();
+    recEvent("audio_end_recv", {cid: d.cid, idx: c.idx,
+      bytes: d.bytes});
     const total = c.frames.reduce((a, f) => a + f.length, 0);
     const buf = new Uint8Array(total);
     let off = 0;
@@ -303,6 +395,7 @@ function onDown(m){
   }
   if (m.name === "stop"){
     lastBargeCutId = d.cut_id;
+    recEvent("stop_recv", {cut_id: d.cut_id});
     log(`stop received (signal→stop ` +
         `${Math.round((now() - (d.t_send - 0)) * 1000)} ms ` +
         `bridge-side stamp)`);
@@ -310,6 +403,8 @@ function onDown(m){
     return;
   }
   if (m.name === "cut-final"){
+    recEvent("cut_final_recv", {cut_id: d.cut_id,
+      spoken: d.spoken, unheard: d.unheard});
     log(`cut final — spoken: "${d.spoken.slice(0, 50)}" · ` +
         `unheard: "${d.unheard.slice(0, 50)}"`);
     if (currentTurn && turnBubbles.has(currentTurn)){
@@ -336,6 +431,8 @@ function pump(){
   src.connect(ctx.destination);
   playing = {cid, idx: c.idx, source: src,
     startCtx: ctx.currentTime, dur_ms: c.dur_ms, cut: false};
+  c.t_play_start_ms = Date.now();
+  recEvent("play_start", {cid, idx: c.idx});
   setPill("speaking", "speaking");
   if (firstSoundPending && firstSoundPending.turn === c.turn){
     log(`A: clause ${c.idx} SOUND STARTS — ` +
@@ -349,10 +446,16 @@ function pump(){
     playing = null;
     setPill("ok", "connected");
     if (!wasCut){
+      c.t_play_end_ms = Date.now();
+      c.played_ms = c.dur_ms;
+      recEvent("play_end", {cid, idx: c.idx,
+        played_ms: c.dur_ms});
       pub(ctlCh, "signal",
         {kind: "HEARD_POS", idx: c.idx, played_ms: c.dur_ms,
          dur_ms: c.dur_ms, final: true, t_client: tBridge()},
         "HEARD_POS");
+      recEvent("heard_pos", {idx: c.idx, played_ms: c.dur_ms,
+        dur_ms: c.dur_ms, final: true, cut: false});
     }
     pump();
   };
@@ -369,6 +472,11 @@ function doStop(cutId){
       Math.round((audioCtx().currentTime - p.startCtx) * 1000)));
     try { p.source.stop(); } catch(e){}
     try { p.source.disconnect(); } catch(e){}
+    const cc = clauses.get(p.cid);
+    if (cc){ cc.played_ms = played; cc.cut = true;
+      cc.t_play_end_ms = Date.now(); }
+    recEvent("audio_halted", {cid: p.cid, idx: p.idx,
+      played_ms: played, dur_ms: p.dur_ms});
     posEvt = {kind: "HEARD_POS", idx: p.idx, played_ms: played,
       dur_ms: p.dur_ms, final: false, cut: true,
       cut_id: cutId || lastBargeCutId,
@@ -380,7 +488,12 @@ function doStop(cutId){
   // Everything queued but unplayed is unheard by definition.
   playQueue.length = 0;
   setPill("ok", "connected");
-  if (posEvt) pub(ctlCh, "signal", posEvt, "HEARD_POS (cut)");
+  if (posEvt){
+    pub(ctlCh, "signal", posEvt, "HEARD_POS (cut)");
+    recEvent("heard_pos", {idx: posEvt.idx,
+      played_ms: posEvt.played_ms, dur_ms: posEvt.dur_ms,
+      final: false, cut: true, cut_id: posEvt.cut_id});
+  }
 }
 
 /* ---------------- Layers 0+2: speaking ---------------- */
@@ -389,6 +502,7 @@ function sendUtter(text, source, tSpeakEnd){
   const sent = pub(upCh, "utter", {text, source,
     t_send: tBridge(), t_speak_end: tSpeakEnd || tBridge()},
     "utter");
+  recEvent("utter", {text, source, sent});
   bubble("me", esc(text),
     !sent ? "you · NOT SENT — connection down" :
     source === "asr" ? "you · voice (draft ASR final)"
@@ -506,6 +620,464 @@ $("sendBtn").addEventListener("click", sendTyped);
 $("typeInput").addEventListener("keydown", ev => {
   if (ev.key === "Enter") sendTyped();
 });
+
+/* ---------------- mic capture ----------------
+   MediaRecorder where it exists (Chrome/Android; iOS Safari
+   14.3+ WKWebView/Safari has it too, with audio/mp4), else a
+   WebAudio PCM capture encoded to WAV on stop. Failure is
+   data, not a dead end: the mode/error lands in the record
+   and the finish card, and the transcript + received-audio
+   legs still upload. NOTE (unproven until Howard's phone):
+   Web Speech recognition and getUserMedia both want the mic
+   on iOS — whether they coexist there is a phone-only fact. */
+let micStream = null, mediaRec = null, micChunks = [], pcmCap = null;
+async function startMicCapture(){
+  if (REC_MODE === "off"){
+    REC.mic.mode = "off";
+    REC.mic.error = "disabled by ?rec=off";
+    return false;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    REC.mic.mode = "unavailable";
+    REC.mic.error = "getUserMedia not available in this browser";
+    return false;
+  }
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia(
+      {audio: true});
+  } catch(e){
+    REC.mic.mode = "failed";
+    REC.mic.error = "getUserMedia: " + (e.message || e);
+    log("mic capture FAILED: " + REC.mic.error);
+    return false;
+  }
+  REC.mic.t_start = Date.now();
+  if (REC_MODE !== "pcm" && window.MediaRecorder){
+    const mimes = ["audio/webm;codecs=opus", "audio/webm",
+      "audio/mp4", "audio/ogg;codecs=opus", ""];
+    for (const mt of mimes){
+      try {
+        mediaRec = new MediaRecorder(micStream,
+          mt ? {mimeType: mt} : undefined);
+        break;
+      } catch(e){ mediaRec = null; }
+    }
+    if (mediaRec){
+      micChunks = [];
+      mediaRec.ondataavailable = e => {
+        if (e.data && e.data.size) micChunks.push(e.data);
+      };
+      try {
+        mediaRec.start(1000);
+        REC.mic.mode = "mediarecorder";
+        REC.mic.mime = mediaRec.mimeType;
+        log("mic capture: MediaRecorder (" + mediaRec.mimeType +
+            ")");
+        return true;
+      } catch(e){ mediaRec = null; }
+    }
+  }
+  try {
+    const ctx = audioCtx();
+    const src = ctx.createMediaStreamSource(micStream);
+    const proc = ctx.createScriptProcessor(4096, 1, 1);
+    const gain = ctx.createGain(); gain.gain.value = 0;
+    const chunks = [];
+    proc.onaudioprocess = e => {
+      const ch = e.inputBuffer.getChannelData(0);
+      const i16 = new Int16Array(ch.length);
+      for (let i = 0; i < ch.length; i++){
+        const s = Math.max(-1, Math.min(1, ch[i]));
+        i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      chunks.push(i16);
+    };
+    src.connect(proc); proc.connect(gain);
+    gain.connect(ctx.destination);
+    pcmCap = {src, proc, gain, chunks, sr: ctx.sampleRate};
+    REC.mic.mode = "pcm-wav"; REC.mic.mime = "audio/wav";
+    REC.mic.sample_rate = ctx.sampleRate;
+    log("mic capture: WebAudio PCM fallback @ " +
+        ctx.sampleRate + " Hz");
+    return true;
+  } catch(e){
+    REC.mic.mode = "failed";
+    REC.mic.error = "pcm fallback: " + (e.message || e);
+    log("mic capture FAILED: " + REC.mic.error);
+    return false;
+  }
+}
+function cleanupMic(){
+  if (micStream){
+    micStream.getTracks().forEach(t => {
+      try { t.stop(); } catch(e){} });
+    micStream = null;
+  }
+  mediaRec = null;
+}
+function stopMicCapture(){
+  return new Promise(res => {
+    REC.mic.t_stop = Date.now();
+    if (mediaRec){
+      mediaRec.onstop = () => {
+        REC.mic.blob = new Blob(micChunks,
+          {type: REC.mic.mime || "audio/webm"});
+        cleanupMic(); res(true);
+      };
+      try { mediaRec.stop(); }
+      catch(e){ cleanupMic(); res(false); }
+      return;
+    }
+    if (pcmCap){
+      try {
+        pcmCap.proc.disconnect(); pcmCap.src.disconnect();
+        pcmCap.gain.disconnect();
+      } catch(e){}
+      REC.mic.blob = encodeWav(pcmCap.chunks, pcmCap.sr);
+      pcmCap = null; cleanupMic(); res(true);
+      return;
+    }
+    cleanupMic(); res(!!REC.mic.blob);
+  });
+}
+function encodeWav(chunks, sr){
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const buf = new ArrayBuffer(44 + total * 2);
+  const v = new DataView(buf);
+  const wstr = (o, s) => {
+    for (let i = 0; i < s.length; i++)
+      v.setUint8(o + i, s.charCodeAt(i));
+  };
+  wstr(0, "RIFF"); v.setUint32(4, 36 + total * 2, true);
+  wstr(8, "WAVE"); wstr(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true); v.setUint32(24, sr, true);
+  v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true); wstr(36, "data");
+  v.setUint32(40, total * 2, true);
+  let off = 44;
+  for (const c of chunks)
+    for (let i = 0; i < c.length; i++){
+      v.setInt16(off, c[i], true); off += 2;
+    }
+  return new Blob([buf], {type: "audio/wav"});
+}
+
+/* ---------------- walkthrough ----------------
+   TEST-PROTOCOL v1.1's eight maneuvers, adapted to the spike.
+   Header discipline is Howard's: say "Test N" first, let the
+   reply FINISH, then run the maneuver on a clean channel, so
+   the session segments itself in the transcript and the
+   recording — no boundary inference for the analyzer. */
+const WT_STEPS = [
+  {id: "cold-open", n: 1, header: "Test one", title: "Cold open",
+   body: `Say <span class="say">“Test one”</span> and let my reply
+     finish. Then ask: <span class="say">“Testing — can you hear
+     me?”</span> This is the baseline exchange everything else
+     is compared against.`},
+  {id: "short-exchanges", n: 2, header: "Test two",
+   title: "Short exchanges ×3",
+   body: `Say <span class="say">“Test two”</span>, let the reply
+     finish, then ask these one at a time, waiting for each
+     answer:<br>1. <span class="say">“What time is it in Chicago
+     right now?”</span><br>2. <span class="say">“One word only:
+     what's the capital of Norway?”</span><br>3.
+     <span class="say">“Count from one to five, slowly.”</span>`},
+  {id: "long-cut", n: 3, header: "Test three",
+   title: "The long-answer cut",
+   body: `Say <span class="say">“Test three”</span>, let the reply
+     finish, then ask: <span class="say">“Explain how a bill
+     becomes law — take your time.”</span> Let two clauses play,
+     then cut in at a NORMAL voice, mid-sentence:
+     <span class="say">“Stop — new question: what's the weather
+     doing tomorrow?”</span> (Talking over me works; so does the
+     ⚡ Interrupt button.)`},
+  {id: "deep-cut", n: 4, header: "Test four", title: "The deep cut",
+   body: `Say <span class="say">“Test four”</span>, let the reply
+     finish, then ask: <span class="say">“Tell me the story of
+     how this room got built — start at the beginning.”</span>
+     After just two or three words of my answer, cut in:
+     <span class="say">“Hold on — what time is it?”</span>`},
+  {id: "rapid-fire", n: 5, header: "Test five",
+   title: "Rapid-fire ×3",
+   body: `Say <span class="say">“Test five”</span>, let the reply
+     finish, then with minimal gaps: <span class="say">“What's
+     two plus two?”</span> / <span class="say">“And times
+     three?”</span> / <span class="say">“And minus
+     five?”</span>`},
+  {id: "pause", n: 6, header: "Test six", title: "The pause",
+   body: `Say <span class="say">“Test six”</span>, let the reply
+     finish, then ask any question. After my answer, stay silent
+     a full 10 seconds — tap “Start the 10-second silence” and
+     let it run out — then say: <span class="say">“Still
+     there?”</span> (I should wait politely: no filler, no
+     false cut-offs.)`},
+  {id: "typed-turn", n: 7, header: "Test seven",
+   title: "Typed turn",
+   body: `Say <span class="say">“Test seven”</span>, let the reply
+     finish, then use the Type box below:
+     <span class="say">“Typed test — reply with one
+     sentence.”</span>`},
+  {id: "heard-position", n: 8, header: "Test eight",
+   title: "Heard-position check",
+   body: `Say <span class="say">“Test eight”</span>, let the reply
+     finish, then ask for a long one: <span class="say">“Explain
+     how the moon landing worked — take your time.”</span> While
+     I talk, watch my words build in the thread; cut in
+     mid-sentence. Then look at my bubble: the greyed,
+     struck-through words should be EXACTLY the words you did
+     not hear. If the split matches your ears, the
+     heard-position accounting is true.`},
+];
+let wtIdx = -1, wtDone = false, pauseTimer = null;
+const wtPanel = $("wtPanel"), wtProg = $("wtProg"),
+      wtTitle = $("wtTitle"), wtBody = $("wtBody"),
+      wtRec = $("wtRec"), wtRow = $("wtRow"), wtUp = $("wtUp");
+
+$("wtBtn").addEventListener("click", () => {
+  const open = wtPanel.classList.toggle("open");
+  $("wtBtn").classList.toggle("on", open);
+  $("wtBtn").textContent = open ? "✕ Walkthrough test"
+                                : "▶ Walkthrough test";
+  if (open && wtIdx === -1 && !wtDone) wtShowIntro();
+});
+function wtShowIntro(){
+  wtProg.textContent =
+    "Guided test · TEST-PROTOCOL v1.1, lean adaptation";
+  wtTitle.textContent = "The walkthrough test";
+  wtBody.innerHTML =
+    `Eight maneuvers, about 6–8 minutes. Before each one, say
+     its header out loud (<span class="say">“Test one”</span>,
+     <span class="say">“Test two”</span>, …) and let my reply
+     finish before starting — every measurement then begins on
+     a clean channel.<br><br>Tapping Begin starts the both-ends
+     recording: your mic, every clause of my voice EXACTLY as
+     it arrives here, and the full stamped transcript — your
+     side and mine. At the end you upload it all, and the two
+     records are analyzed together.`;
+  wtRec.textContent = "";
+  wtRow.innerHTML = "";
+  const b = document.createElement("button");
+  b.className = "wtb primary";
+  b.textContent = "● Begin — start recording";
+  b.onclick = wtBegin;
+  wtRow.appendChild(b);
+}
+async function wtBegin(){
+  REC.active = true;
+  REC.startedWall = Date.now();
+  REC.events = []; REC.steps = [];
+  REC.partialCountAtStart = partialCount;
+  ping();
+  await startMicCapture();
+  recEvent("wt_begin", {mic_mode: REC.mic.mode,
+    mic_error: REC.mic.error});
+  if (REC.mic.mode === "mediarecorder" ||
+      REC.mic.mode === "pcm-wav")
+    log("walkthrough: recording — mic + received audio + " +
+        "transcript, both ends");
+  else
+    log("walkthrough: mic capture unavailable (" +
+        (REC.mic.error || REC.mic.mode) + ") — transcript and " +
+        "received audio still recorded");
+  wtIdx = 0;
+  wtShowStep();
+}
+function wtShowStep(){
+  const s = WT_STEPS[wtIdx];
+  REC.steps.push({id: s.id, n: s.n, title: s.title,
+    t_begin_ms: Date.now()});
+  recEvent("step_begin", {step: s.id, n: s.n});
+  wtProg.textContent = `Maneuver ${s.n} of 8 · header: “${s.header}”`;
+  wtTitle.textContent = s.title;
+  wtBody.innerHTML = s.body;
+  wtRec.innerHTML = (REC.mic.mode === "mediarecorder" ||
+    REC.mic.mode === "pcm-wav")
+    ? `<span class="dot">●</span> recording — mic ${esc(REC.mic.mode)} + received audio + transcript`
+    : `<span class="dot">●</span> recording — transcript + received audio (mic unavailable)`;
+  wtRow.innerHTML = "";
+  if (s.id === "pause"){
+    const pb = document.createElement("button");
+    pb.className = "wtb";
+    pb.textContent = "Start the 10-second silence";
+    pb.onclick = () => wtPause(pb);
+    wtRow.appendChild(pb);
+  }
+  const nb = document.createElement("button");
+  nb.className = "wtb primary";
+  nb.textContent = wtIdx === WT_STEPS.length - 1
+    ? "Finish — stop recording" : "Next ▶";
+  nb.onclick = wtNext;
+  wtRow.appendChild(nb);
+}
+function wtPause(btn){
+  btn.disabled = true;
+  let left = 10;
+  recEvent("pause_begin", {});
+  wtRec.innerHTML =
+    `<span class="dot">●</span> silence: ${left} s…`;
+  pauseTimer = setInterval(() => {
+    left--;
+    if (left <= 0){
+      clearInterval(pauseTimer); pauseTimer = null;
+      recEvent("pause_end", {});
+      wtRec.innerHTML = `<span class="dot">●</span> silence done` +
+        ` — now say “Still there?”`;
+      btn.disabled = false;
+    } else {
+      wtRec.innerHTML =
+        `<span class="dot">●</span> silence: ${left} s…`;
+    }
+  }, 1000);
+}
+async function wtNext(){
+  const s = WT_STEPS[wtIdx];
+  const cur = REC.steps[REC.steps.length - 1];
+  if (cur && cur.id === s.id) cur.t_end_ms = Date.now();
+  recEvent("step_end", {step: s.id, n: s.n});
+  if (wtIdx < WT_STEPS.length - 1){ wtIdx++; wtShowStep(); return; }
+  recEvent("wt_finish", {});
+  await stopMicCapture();
+  ping();
+  REC.active = false;
+  wtDone = true;
+  wtShowFinish();
+}
+function wtShowFinish(){
+  wtProg.textContent = "Walkthrough complete";
+  wtTitle.textContent = "Recording stopped";
+  const nU = REC.events.filter(e => e.k === "utter").length;
+  const nC = [...clauses.values()]
+    .filter(c => c.frames && c.frames.length).length;
+  const nCut = REC.events
+    .filter(e => e.k === "heard_pos" && e.cut).length;
+  const micDesc = REC.mic.blob
+    ? `${REC.mic.mode}, ${Math.round(REC.mic.blob.size / 1024)} KB`
+    : `unavailable (${REC.mic.error || REC.mic.mode || "n/a"})`;
+  wtBody.innerHTML =
+    `Captured on this phone: <b>${nU}</b> utterances,
+     <b>${nC}</b> of my clauses with their audio kept exactly as
+     received, <b>${nCut}</b> cuts. Mic: ${esc(micDesc)}.<br>
+     Upload the results so this record can be laid beside the
+     server's — that's when the three numbers get their
+     recording-truth view.`;
+  wtRec.textContent = "";
+  wtRow.innerHTML = "";
+  const ub = document.createElement("button");
+  ub.className = "wtb primary";
+  ub.textContent = "⬆ Upload results";
+  ub.onclick = () => uploadResults(ub);
+  wtRow.appendChild(ub);
+}
+
+/* ---------------- upload ---------------- */
+const UPLOAD_URL =
+  "https://165.22.38.47.sslip.io:8443/lean-upload";
+function uploadSessionId(){
+  if (REC.session) return REC.session;
+  const d = new Date(REC.startedWall || Date.now());
+  const p = n => String(n).padStart(2, "0");
+  return `client-${d.getFullYear()}${p(d.getMonth() + 1)}` +
+    `${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}` +
+    `${p(d.getSeconds())}`;
+}
+function micFileName(){
+  const m = (REC.mic.mime || "").split(";")[0];
+  return {"audio/webm": "mic.webm", "audio/mp4": "mic.m4a",
+    "audio/wav": "mic.wav", "audio/ogg": "mic.ogg"}[m]
+    || "mic.bin";
+}
+function buildClientRecord(){
+  const cls = [];
+  for (const [cid, c] of clauses){
+    cls.push({cid, turn: c.turn, idx: c.idx, text: c.text,
+      t_recv_ms: c.t_recv_ms,
+      t_first_frame_ms: c.t_first_frame_ms,
+      t_audio_end_ms: c.t_audio_end_ms,
+      t_play_start_ms: c.t_play_start_ms,
+      t_play_end_ms: c.t_play_end_ms,
+      dur_ms: c.dur_ms, played_ms: c.played_ms, cut: !!c.cut,
+      heard_through: heardThroughWord(c),
+      bytes_received: c.frames.reduce((a, f) => a + f.length, 0),
+      file: "clause-" + cid + ".mp3"});
+  }
+  const utters = REC.events.filter(e => e.k === "utter")
+    .map(e => ({t_local_ms: e.t_local_ms, text: e.text,
+                source: e.source, sent: e.sent}));
+  return {
+    kind: "lean-client-record", version: 1,
+    session: uploadSessionId(), bridge_session: REC.session,
+    ch_prefix: CH_PREFIX, user_agent: navigator.userAgent,
+    started_wall_ms: REC.startedWall, ended_wall_ms: Date.now(),
+    clock: {pongs: REC.pongs,
+            offset_ms_final: Math.round(clockOffset * 1000)},
+    steps: REC.steps, events: REC.events,
+    utterances: utters,
+    asr: {finals: utters.filter(u => u.source === "asr"),
+          partial_count: partialCount - REC.partialCountAtStart},
+    clauses: cls,
+    mic: {mode: REC.mic.mode, mime: REC.mic.mime,
+          error: REC.mic.error, t_start_ms: REC.mic.t_start,
+          t_stop_ms: REC.mic.t_stop,
+          sample_rate: REC.mic.sample_rate,
+          bytes: REC.mic.blob ? REC.mic.blob.size : 0,
+          file: REC.mic.blob ? micFileName() : null},
+  };
+}
+async function postArtifact(params, body, ctype, label, upLog){
+  const r = await fetch(UPLOAD_URL + "?" +
+    new URLSearchParams(params).toString(),
+    {method: "POST", headers: {"Content-Type": ctype}, body});
+  if (!r.ok) throw new Error(label + ": HTTP " + r.status);
+  const j = await r.json();
+  upLog(`${label} stored (${j.bytes} bytes)`);
+}
+async function uploadResults(btn){
+  const lines = [];
+  const upLog = s => {
+    lines.push(s); wtUp.textContent = lines.join("\n");
+  };
+  btn.disabled = true;
+  const sid = uploadSessionId();
+  upLog("uploading session " + sid + " …");
+  let ok = 0, total = 0;
+  total++;
+  try {
+    await postArtifact({session: sid, kind: "client-json"},
+      JSON.stringify(buildClientRecord()), "application/json",
+      "client.json", upLog);
+    ok++;
+  } catch(e){ upLog("client.json FAILED: " + e.message); }
+  if (REC.mic.blob){
+    total++;
+    try {
+      await postArtifact({session: sid, kind: "mic",
+        mime: REC.mic.mime || ""}, REC.mic.blob,
+        REC.mic.mime || "application/octet-stream",
+        micFileName(), upLog);
+      ok++;
+    } catch(e){ upLog("mic FAILED: " + e.message); }
+  } else {
+    upLog("mic: nothing to upload (" + (REC.mic.mode || "?") +
+      (REC.mic.error ? " — " + REC.mic.error : "") + ")");
+  }
+  for (const [cid, c] of clauses){
+    if (!c.frames || !c.frames.length) continue;
+    total++;
+    try {
+      await postArtifact({session: sid, kind: "clause", cid},
+        new Blob(c.frames, {type: "audio/mpeg"}),
+        "application/octet-stream", "clause " + cid, upLog);
+      ok++;
+    } catch(e){ upLog("clause " + cid + " FAILED: " +
+      e.message); }
+  }
+  upLog(`done: ${ok}/${total} artifacts stored on the runner ` +
+    `under session ${sid}`);
+  log(`upload: ${ok}/${total} artifacts stored (session ${sid})`);
+  btn.disabled = false;
+}
 
 connect().catch(e => {
   setPill("bad", "error");
