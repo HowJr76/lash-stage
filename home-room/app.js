@@ -1046,12 +1046,25 @@ function kitSegTick(name, an, buf, st, extraFn) {
 function kitSegLoop() {
   if (!kit.active || !kit.micAn) return;
   const mBuf = new Uint8Array(kit.micAn.frequencyBinCount);
-  const rBuf = kit.remAn ? new Uint8Array(kit.remAn.frequencyBinCount) : null;
+  let rAn = null, rBuf = null;
   const tick = () => {
     if (!kit.active) return;
     if (kit.micAn) kitSegTick('mic', kit.micAn, mBuf, kit.segs.mic,
       () => ({ during_remote: !!(kit.segs.rem.loud || playing) }));
-    if (kit.remAn && rBuf) kitSegTick('remote', kit.remAn, rBuf, kit.segs.rem);
+    if (kit.remAn) {
+      // The remote analyser is wired AFTER this loop starts (the
+      // agent's track is picked up by the late-wire scan), so the
+      // buffer must be (re)allocated whenever the analyser
+      // appears — allocating once at loop start left the remote
+      // detector permanently bufferless (found in harness run 2:
+      // track wired + recording full of Lash's audio, zero
+      // remote segments).
+      if (rAn !== kit.remAn) {
+        rAn = kit.remAn;
+        rBuf = new Uint8Array(rAn.frequencyBinCount);
+      }
+      kitSegTick('remote', rAn, rBuf, kit.segs.rem);
+    }
     kit.segRAF = requestAnimationFrame(tick);
   };
   tick();
