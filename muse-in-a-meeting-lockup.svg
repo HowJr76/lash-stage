@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1240 350" role="img" aria-label="Muse in a Meeting — Put your Muse in the meeting. By Moseley Innovations">
+  <title>Muse in a Meeting — by Moseley Innovations</title>
+  <defs>
+    <linearGradient id="teal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1cc7da"/>
+      <stop offset="1" stop-color="#0e93a6"/>
+    </linearGradient>
+  </defs>
+  <!-- Product mark: speech bubble with an M — a Muse speaking in the room -->
+  <g>
+    <rect x="20" y="66" width="250" height="188" rx="48" fill="url(#teal)"/>
+    <polygon points="78,238 78,306 156,238" fill="#0e93a6"/>
+    <text x="145" y="196" text-anchor="middle"
+          font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+          font-size="128" font-weight="700" fill="#ffffff">M</text>
+  </g>
+  <!-- Product name -->
+  <text x="312" y="172"
+        font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        font-size="86" font-weight="700" fill="#ffffff">Muse in a <tspan fill="#17b6c9">Meeting</tspan></text>
+  <!-- Tagline -->
+  <text x="314" y="232"
+        font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        font-size="29" font-weight="600" letter-spacing="6" fill="#17b6c9">PUT YOUR MUSE IN THE MEETING.</text>
+  <!-- Maker mark: Moseley Innovations -->
+  <image x="314" y="262" width="54" height="54" href="mi-logo.jpg" xlink:href="mi-logo.jpg"/>
+  <text x="384" y="300"
+        font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        font-size="25" font-weight="600" letter-spacing="4" fill="#9fb2c1">BY MOSELEY INNOVATIONS</text>
+</svg>
