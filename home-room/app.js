@@ -812,7 +812,7 @@ const kit = {
   recorder: null, recMime: '', recFormat: '', recSr: 0,
   pcm: null, sliceSeq: 0, slices: {},
   remoteWired: false, remotePresent: false,
-  stored: null, timingStored: null, _storedWaiters: [],
+  stored: null, timingStored: null, _storedWaiters: [], _timingWaiters: [],
 };
 
 function kitStat(txt) { if (els.kitStat) els.kitStat.textContent = txt ? ' · ' + txt : ''; }
@@ -919,13 +919,20 @@ function kitOnTimingStored(pkt) {
   if (pkt.kit_session !== kit.session) return;
   kit.timingStored = pkt;
   kitEv('timing_stored', { ok: pkt.ok });
-  for (const w of kit._storedWaiters.splice(0)) w(pkt);
+  for (const w of kit._timingWaiters.splice(0)) w(pkt);
 }
 function kitWaitStored(ms) {
   if (kit.stored) return Promise.resolve(kit.stored);
   return new Promise((res) => {
     const to = setTimeout(() => res(null), ms);
     kit._storedWaiters.push((p) => { clearTimeout(to); res(p); });
+  });
+}
+function kitWaitTiming(ms) {
+  if (kit.timingStored) return Promise.resolve(kit.timingStored);
+  return new Promise((res) => {
+    const to = setTimeout(() => res(null), ms);
+    kit._timingWaiters.push((p) => { clearTimeout(to); res(p); });
   });
 }
 
@@ -1089,6 +1096,18 @@ async function kitStart() {
   kit.pingTimer = setInterval(kitPing, 30000);
   if (kit.ctx && kit.dest) { kitStartRecorder(); kitSegLoop(); }
   else kitStat('kit: timing only (no recorder)');
+  // Late-wire: if the agent's track was subscribed BEFORE the kit
+  // graph existed (the usual case — the agent is already in the
+  // room publishing when Howard joins), the trackSubscribed hook
+  // fired too early and skipped it. Pick the track up now.
+  try {
+    for (const p of room.remoteParticipants.values()) {
+      if (p.identity !== cfg.agentIdentity) continue;
+      for (const pub of p.trackPublications.values()) {
+        if (pub.kind === 'audio' && pub.track) kitRemoteTrack(pub.track);
+      }
+    }
+  } catch (e) {}
 }
 
 function kitRemoteTrack(track) {
@@ -1157,7 +1176,9 @@ async function kitFinish() {
   kitEv('rec_end_sent', { slices: sliceMeta.length });
   await kitSendBundle(false);
   const stored = await kitWaitStored(12000);
-  kitEv('finish', { stored_ok: !!(stored && stored.ok) });
+  const tstored = await kitWaitTiming(4000);
+  kitEv('finish', { stored_ok: !!(stored && stored.ok),
+                    timing_ok: !!(tstored && tstored.ok) });
   kit.active = false;
   if (kit.segRAF) cancelAnimationFrame(kit.segRAF);
   if (kit.ctx) { try { kit.ctx.close(); } catch (e) {} kit.ctx = null; }
