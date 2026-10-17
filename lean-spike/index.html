@@ -222,7 +222,7 @@ function startAbly(opts, viaFragment){
   ably.connection.on("connected", () => {
     setPill("ok", "connected");
     log("ably connected");
-    ping();
+    pingUntilPong();
   });
   ably.connection.on("failed", sc => {
     setPill("bad", "failed");
@@ -266,8 +266,27 @@ function pub(ch, name, data, label, quiet){
   ch.publish(name, typeof data === "string" ? data : JSON.stringify(data));
   return true;
 }
+let pongSeen = false;
 function ping(){
   pub(ctlCh, "signal", {kind: "PING", t_client: now()}, "PING", true);
+}
+/* One ping is a race: the PING goes out on the connected event,
+   but this page's down-channel attach may land a beat AFTER the
+   bridge's pong has already fanned out — the pong is gone, the
+   clock never syncs, and the session id (learned from the pong)
+   never arrives. Observed live 2026-10-17: a second page
+   attached to the same channels got the pong; the page that
+   asked for it did not. Re-ping until the first pong lands. */
+function pingUntilPong(){
+  ping();
+  let tries = 0;
+  const pi = setInterval(() => {
+    if (pongSeen || tries++ > 6 || !connIs("connected")){
+      clearInterval(pi);
+      return;
+    }
+    ping();
+  }, 1500);
 }
 
 /* ---------------- Layer 1: signals ---------------- */
@@ -332,6 +351,7 @@ let firstSoundPending = null;   // {turn, t_clause_recv} for A readout
 function onDown(m){
   let d; try { d = JSON.parse(m.data); } catch(e){ return; }
   if (m.name === "pong"){
+    pongSeen = true;
     const rtt = now() - d.t0;
     clockOffset = d.t_bridge_recv - (d.t0 + rtt / 2);
     // The bridge-online note is fire-once at bridge startup; a
