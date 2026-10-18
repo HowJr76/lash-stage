@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lash</title>
+<title>Lash · Moseley Innovations</title>
 <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
 <script type="importmap">
 {"imports": {
@@ -12,22 +12,46 @@
 }}
 </script>
 <style>
-  html, body { margin:0; height:100%; background:#101418; color:#e8eef2;
+  html, body { margin:0; height:100%; background:radial-gradient(1200px 700px at 50% -10%, #0d2c47 0%, #081c30 45%, #050f1c 100%); color:#e8eef2;
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
   #wrap { height:100%; display:flex; flex-direction:column; align-items:center;
     justify-content:center; gap:18px; padding:24px; box-sizing:border-box; }
   #face { width:220px; height:220px; border-radius:50%;
     background:#fff;
     display:flex; align-items:center; justify-content:center;
-    font-size:110px; border:4px solid #2c3944; transition: box-shadow .25s;
+    font-size:110px; border:4px solid #17b6c9; transition: box-shadow .25s;
     overflow:hidden; }
   #face video { width:100%; height:100%; object-fit:cover; display:block; }
   #face canvas { width:100%; height:100%; display:block; }
-  #face.speaking { box-shadow: 0 0 0 10px rgba(90,180,255,.25), 0 0 60px rgba(90,180,255,.35);
+  /* Loops readability (stage v9.2, Fix Round 2): in loops mode the
+     four state clips STACK and crossfade (opacity) instead of
+     hard-cutting. Gated on the data attribute — set only in loops
+     mode — so puppet/world paths, which share these elements and
+     the #face className, keep their original rendering untouched. */
+  #face[data-loops="1"] { position:relative; }
+  #face[data-loops="1"] video { position:absolute; inset:0; opacity:0;
+    transition: opacity .2s ease-in-out; }
+  #face.speaking { box-shadow: 0 0 0 10px rgba(23,182,201,.25), 0 0 60px rgba(23,182,201,.35);
     animation: talkbob .9s ease-in-out infinite; }
+  /* Muted presentation (2026-10-18): while the bridge holds Lash
+     muted, the avatar stays on its idle loop, desaturated and
+     dimmed, badged — muted must read at a glance as a deliberate
+     state, never as a frozen or broken face. */
+  #face.muted { position:relative; }
+  #face.muted video, #face.muted canvas { filter: grayscale(.45) brightness(.72); }
+  #mutedBadge { display:none; position:absolute; right:10px; bottom:10px;
+    z-index:5; font-size:15px; line-height:1; background:rgba(0,0,0,.55);
+    border-radius:999px; padding:4px 8px; }
+  #face.muted #mutedBadge { display:block; }
   @keyframes talkbob { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
   #face.listening { box-shadow: 0 0 0 8px rgba(120,255,170,.18); }
   #name { font-size:28px; font-weight:600; letter-spacing:.02em; }
+  #name .name-brand { color:#17b6c9; }
+  /* Moseley Innovations brand strip (skin only — no layout/JS changes) */
+  #brand { display:flex; align-items:center; gap:10px; margin-top:4px; opacity:.9; }
+  #brand img { width:30px; height:30px; border-radius:8px; border:1px solid rgba(23,182,201,.5); display:block; }
+  #brand span { font-size:13px; font-weight:700; letter-spacing:.18em; color:#cfe6ee; }
+  #brand em { font-style:normal; font-size:11px; font-weight:600; letter-spacing:.22em; color:#17b6c9; }
   #status { font-size:15px; color:#9fb2c1; min-height:20px; }
   #caption { max-width:900px; text-align:center; font-size:20px; line-height:1.45;
     color:#d7e3ec; min-height:56px; }
@@ -37,11 +61,12 @@
 </head>
 <body>
 <div id="wrap">
-  <div id="face"><div id="world3d" style="display:none;width:100%;height:100%"></div><canvas id="puppetCanvas" width="900" height="900" style="display:none"></canvas><video id="faceVideo" src="lash-face.mp4" poster="lash-face.jpg" autoplay muted loop playsinline></video><video id="faceTalk" src="lash-talk.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceWork" src="lash-work.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceMake" src="lash-make.mp4" muted loop playsinline preload="auto" style="display:none"></video></div>
-  <div id="name">Lash</div>
+  <div id="face"><div id="world3d" style="display:none;width:100%;height:100%"></div><canvas id="puppetCanvas" width="900" height="900" style="display:none"></canvas><video id="faceVideo" src="lash-face.mp4" poster="lash-face.jpg" autoplay muted loop playsinline></video><video id="faceTalk" src="lash-talk.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceWork" src="lash-work.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceMake" src="lash-make.mp4" muted loop playsinline preload="auto" style="display:none"></video><div id="mutedBadge">🔇</div></div>
+  <div id="name">Lash <span class="name-brand">· Moseley Innovations</span></div>
   <div id="status">connecting…</div>
   <div id="caption"></div>
   <div id="heard"></div>
+  <div id="brand"><img src="mi-logo.jpg" alt="Moseley Innovations logo"><span>MUSE IN A MEETING</span><em>BY MOSELEY INNOVATIONS</em></div>
 </div>
 <script>
 const qs = new URLSearchParams(location.search);
@@ -55,7 +80,7 @@ const queue = [];
 let playing = false;
 let currentAudio = null;
 let currentText = '';
-let currentItem = null;   // queue item actually playing (caption rule)
+let currentItem = null;   // queue item actually playing (accounting)
 
 // Puppet state (stage v6) — declared early; the engine lives below the
 // face-state code. PUP.on stays false until every mandatory layer has
@@ -71,6 +96,17 @@ const PUP = {
 // flips true only after the scene AND model are fully ready; every
 // failure before that leaves v6/v5 exactly as they were.
 const WORLD = { on: false };
+
+// Face ownership (stage v9, Howard 2026-10-15): the v5 animated loops —
+// the Muse-styled animated GIFs of Lash — OWN the medallion by default;
+// they are the avatar Howard likes best. The v6–v8 2D puppet is retired
+// by his decision and the v7 3D world is not selected. Both engines stay
+// in this file, intact and re-enableable (?fx=puppet / ?fx=world), but
+// in the default path neither may take the face over: the puppet loader
+// doesn't even fetch its layers, and the world module never builds.
+const FX = (qs.get('fx') || 'loops').toLowerCase();
+const LOOPS_MODE = FX !== 'puppet' && FX !== 'world';
+window.__LASH_LOOPS_MODE__ = LOOPS_MODE;
 
 function setStatus(s) { statusEl.textContent = s; }
 
@@ -108,6 +144,66 @@ const liveMode = !!LIVE_KEY;
 let upCh = null, downCh = null;
 const pendingLines = new Map();
 const pendingAudio = new Map();
+
+// ---- latency trace (2026-10-15 latency rescue; log-only) ----
+// In-page event stamps: window.__lashTrace collects
+// {ev, seq, t (performance.now ms), wall (Date.now epoch ms)} so the
+// harness and trace_report.py can size the stage spans (publish ->
+// queued -> play_start -> play_end). play_start/play_end are also
+// published up the wire as control notes — the bridge logs their
+// receipt, which gives live sessions the playback spans tonight's
+// logs could not account for at all.
+window.__lashTrace = [];
+function lashTrace(ev, seq, extra) {
+  try {
+    window.__lashTrace.push(Object.assign(
+      {ev, seq: (seq == null ? null : seq),
+       t: Math.round(performance.now() * 10) / 10, wall: Date.now()},
+      extra || {}));
+    if (window.__lashTrace.length > 600) window.__lashTrace.shift();
+  } catch (e) { /* tracing must never break the stage */ }
+  if ((ev === 'play_start' || ev === 'play_end') && upCh) {
+    // Playback accounting rides these notes (stage v9.3): play_end
+    // carries pos_ms/dur_ms (where playback stopped, from the audio
+    // element's own clock) and stopped=true when the line was CUT
+    // (barge-in/flush) rather than played out — the bridge splits
+    // the line into heard/unheard at exactly that position.
+    try { upCh.publish('control', Object.assign(
+      {type: ev, seq: seq, wall: Date.now()}, extra || {}));
+    } catch (e) {}
+  }
+}
+// Emit a line's play_end exactly once, whichever way it ends.
+function emitPlayEnd(item, stopped) {
+  if (!item || item._playEndSent) return;
+  item._playEndSent = true;
+  let pos = null, dur = null;
+  if (currentAudio) {
+    try {
+      if (isFinite(currentAudio.currentTime))
+        pos = Math.round(currentAudio.currentTime * 1000);
+      if (isFinite(currentAudio.duration))
+        dur = Math.round(currentAudio.duration * 1000);
+    } catch (e) { /* no clock (text lane): position stays unknown */ }
+  }
+  lashTrace('play_end', item.seq,
+            {pos_ms: pos, dur_ms: dur, stopped: !!stopped});
+}
+// Filler queue guard: a queued, not-yet-playing filler must never sit
+// ahead of a substantive line (the consult's queueing finding — an
+// acknowledgment occupying the playback queue delays the real answer
+// behind it). When substance arrives, queued fillers are preempted.
+// Disable with ?fqguard=0.
+const FQ_GUARD = qs.get('fqguard') !== '0';
+function preemptQueuedFillers() {
+  if (!FQ_GUARD) return;
+  for (let i = queue.length - 1; i >= 0; i--) {
+    if (queue[i].filler) {
+      lashTrace('filler_preempted', queue[i].seq);
+      queue.splice(i, 1);
+    }
+  }
+}
 function pairSpeech(seq) {
   const line = pendingLines.get(seq);
   if (!line) return;
@@ -118,9 +214,11 @@ function pairSpeech(seq) {
   if (!url && !line.gh_audio_path) return;
   pendingLines.delete(seq);
   pendingAudio.delete(seq);
+  if (!line.filler) preemptQueuedFillers();
   queue.push({seq, text: line.text, audio_url: url || null,
               gh_audio_path: line.gh_audio_path || null,
-              env: line.env || null});
+              env: line.env || null, filler: !!line.filler});
+  lashTrace('queued', seq);
   playNext();
 }
 if (liveMode && window.Ably) {
@@ -132,12 +230,18 @@ if (liveMode && window.Ably) {
       setStatus('listening (live)');
       face.className = 'listening';
       publishHello();
-      // Greeting: the playful standing portrait for the first seconds.
-      faceShow('make');
-      setTimeout(() => { if (faceState === 'make' && !playing) faceShow('idle'); }, 8000);
+      // Greeting (stage v9): the playful standing portrait owns the
+      // medallion only inside this bounded window after connect, and
+      // only until the first real event — an utterance, a thinking
+      // signal, or speech — supersedes it via faceRefresh(). The timer
+      // is a bound, never the driver.
+      greetingUntil = Date.now() + GREET_MS;
+      faceRefresh();
+      setTimeout(faceRefresh, GREET_MS + 60);
     });
     ably.connection.on('failed', () => setStatus('live wire failed'));
     downCh.subscribe('line', (m) => {
+      lashTrace('line_recv', m.data.seq);
       pendingLines.set(m.data.seq, m.data);
       setTimeout(() => pendingLines.delete(m.data.seq), 8000);
       pairSpeech(m.data.seq);
@@ -146,28 +250,55 @@ if (liveMode && window.Ably) {
       try {
         const buf = m.data;
         const seq = new DataView(buf).getUint32(0);
+        lashTrace('audio_recv', seq);
         const blob = new Blob([buf.slice(4)], {type: 'audio/mpeg'});
         pendingAudio.set(seq, URL.createObjectURL(blob));
         setTimeout(() => pendingAudio.delete(seq), 8000);
         pairSpeech(seq);
       } catch (e) { /* bad frame — skip */ }
     });
-    downCh.subscribe('flush', () => stopPlayback());
+    downCh.subscribe('flush', () => { lashTrace('flush_recv'); stopPlayback(); });
     downCh.subscribe('say_text', (m) => {
+      if (!m.data.filler) preemptQueuedFillers();
       queue.push({seq: m.data.seq, kind: 'text', text: m.data.text,
                   voiceName: m.data.voiceName || null,
-                  rate: m.data.rate || 1.0, pitch: m.data.pitch ?? 1.0});
+                  rate: m.data.rate || 1.0, pitch: m.data.pitch ?? 1.0,
+                  filler: !!m.data.filler});
+      lashTrace('queued', m.data.seq);
       playNext();
     });
-    // Face-state signals from the bridge (e.g. thinking while a reply is
-    // being composed). Never fight active speech; auto-revert to idle.
-    let thinkTimer = null;
+    // Face-state signals from the bridge (stage v9): 'thinking' is
+    // published the moment an utterance reaches the bridge and the
+    // brain starts composing; 'done' when the turn's lines have all
+    // shipped. The signals only move the state machine's flags — the
+    // visible loop is always resolved by faceRefresh(), so a thinking
+    // signal that lands mid-playback is remembered, not dropped, and
+    // takes the face the instant playback ends.
+    let thinkFailsafe = null;
     downCh.subscribe('face', (m) => {
-      if (!m.data || playing) return;
+      if (!m.data) return;
       if (m.data.state === 'thinking') {
-        faceShow('work');
-        clearTimeout(thinkTimer);
-        thinkTimer = setTimeout(() => { if (!playing) faceShow('idle'); }, 25000);
+        faceThinking = true;
+        greetingUntil = 0;
+        clearTimeout(thinkFailsafe);
+        // Failsafe only: if the brain dies mid-compose (it has), the
+        // work loop must not stare forever.
+        thinkFailsafe = setTimeout(() => {
+          faceThinking = false; faceRefresh();
+        }, 25000);
+        faceRefresh();
+      } else if (m.data.state === 'done' || m.data.state === 'listening') {
+        faceThinking = false;
+        clearTimeout(thinkFailsafe);
+        faceRefresh();
+      } else if (m.data.state === 'muted') {
+        // The bridge holds Lash muted (listen-only): present the
+        // muted state until 'unmuted' (or the call ends).
+        faceMuted = true;
+        faceRefresh();
+      } else if (m.data.state === 'unmuted') {
+        faceMuted = false;
+        faceRefresh();
       }
     });
   } catch (e) { setStatus('live wire error'); }
@@ -182,10 +313,34 @@ let lastVoiceSig = '';
 // World telemetry (v7.1): what the 3D layer is doing in THIS browser —
 // the local test harness could not see CDN/WebGL reality, so the stage
 // now reports it up the wire in every hello.
+function presentedFace() {
+  // RECALL-OPT defect-4 hardening (2026-10-18): the hello's world
+  // block reports the 3D layer ONLY — in the 03:07 practice the
+  // bridge logged world 'failed' (no WebGL on web_4_core) while the
+  // PRESENTED face, the sacred 2D fallback, worked throughout
+  // (Howard's report governs). Every hello now also names what is
+  // actually on the medallion, so a world-layer line can never
+  // again be misread as a broken face.
+  try {
+    return {
+      presented: WORLD.on ? 'world3d'
+        : (LOOPS_MODE ? 'loops' : (PUP.on ? 'puppet' : 'video')),
+      face_state: faceState,
+      face_visible: faceVisible,
+      face_muted: faceMuted,
+    };
+  } catch (e) { return {}; }
+}
 function worldTelemetry() {
+  // Stage v9: in loops mode the world is not selected — say so plainly
+  // instead of leaving the bridge to log a forever-'pending' layer.
+  if (LOOPS_MODE) return Object.assign({ state: 'loops', stage: 'loops', err: null,
+    webgl: false, gl: null, glKind: null, three: 'skipped',
+    model: 'skipped', bones: 0, frames: 0, hidden: document.hidden,
+    errors: [] }, presentedFace());
   const d = window.__lashWorldDiag;
-  if (!d) return { state: 'absent' };
-  return {
+  if (!d) return Object.assign({ state: 'absent' }, presentedFace());
+  return Object.assign({
     state: WORLD.on ? 'engaged' : (d.err ? 'failed' : 'pending'),
     stage: d.stage, err: d.err,
     webgl: !!d.webgl, gl: d.gl || null, glKind: d.glKind || null,
@@ -195,7 +350,7 @@ function worldTelemetry() {
     frames: d.frames || 0,
     hidden: document.hidden,
     errors: (d.errors || []).slice(0, 4),
-  };
+  }, presentedFace());
 }
 function publishHello(force) {
   if (!upCh) return;
@@ -266,12 +421,93 @@ relay.onmessage = (ev) => {
 //   make  = standing, playful (greeting on arrival)
 const FACE_VIDS = { idle: 'faceVideo', talk: 'faceTalk', work: 'faceWork', make: 'faceMake' };
 let faceState = 'idle';
+// Loops readability (stage v9.2, Fix Round 2 — Howard in-room during
+// the v9 test: the state loops "wasn't supposed to be random"). The
+// v9 state machine resolved correctly (telemetry proved it), but the
+// SWITCHING read as random to the eye: hard cuts, every entry joining
+// its clip mid-loop at an arbitrary frame, no minimum dwell. Three
+// mechanical fixes, loops mode only:
+//   ENTRY IN-POINTS — a state starts its clip at a defined in-point
+//     (FACE_SPAN), the same frame every time, so each state's opening
+//     gesture becomes recognizable.
+//   CROSSFADE — 200 ms opacity blend instead of a hard cut.
+//   MINIMUM HOLD — a non-preempting state must dwell 1.6 s before it
+//     can be replaced, so brief signals can't flicker the face.
+//     TALKING preempts instantly in both directions (it must track
+//     playback exactly); THINKING preempts idle/greeting instantly.
+// FACE_SPAN in/out points come from a per-clip motion audit
+// (2026-10-16; mean abs frame-diff per 0.5 s bucket):
+//   idle: calm (<=0.52) EXCEPT a distinct movement burst at
+//     1.5-2.5 s (1.12) and a rise at 7.5-8.0 s — in the old full-loop
+//     usage the LISTENING face made a big unexplained move every
+//     8 s, a concrete contributor to the "random" read. The loop
+//     window is set to the calm 2.5-7.5 s segment.
+//   talk: near-still 0-2.0 s, speech motion 2.0-5.0 s — entry at
+//     2.0 s puts the talking motion under the audio from frame one.
+//   work: busy throughout except a still first 0.5 s — entry at
+//     0.5 s so THINKING reads instantly.
+//   make: busy/playful throughout — full span.
+const FACE_SPAN = {
+  idle: { i: 2.5, o: 7.5 },
+  talk: { i: 2.0, o: 7.9 },
+  work: { i: 0.5, o: 7.9 },
+  make: { i: 0.0, o: 7.9 },
+};
+const FACE_FADE_MS = 200;
+const FACE_MIN_HOLD_MS = 1600;
+let faceVisible = 'idle';
+let faceShownAt = performance.now();
+let faceHoldTimer = null;
+// Intentional state machine (stage v9): the visible loop is RESOLVED
+// from real signals at every event, never advanced by timers —
+//   TALKING   exactly while a speech line is playing (the playNext span)
+//   THINKING  while the bridge says the brain is composing (its 'face'
+//             thinking signal, published at utterance receipt; 'done'
+//             clears it when the turn's lines have all shipped)
+//   GREETING  only inside the bounded post-connect window, and only
+//             until the first real event supersedes it
+//   LISTENING at all other times
+// Priority: talk > thinking > greeting > idle. Timers exist only as
+// bounds and failsafes (greeting expiry, a stuck-thinking failsafe),
+// never as the thing that moves the face.
+let faceThinking = false;
+// MUTED (2026-10-18): set/cleared by the bridge's 'face' signals
+// ('muted' / 'unmuted') — e.g. when Lash is placed in listen-only
+// note-taking. While set and not talking, the avatar PRESENTS muted
+// (idle loop, desaturated + badged — see the #face.muted CSS).
+// Priority: talk > muted > thinking > greeting > idle — a muted
+// Lash does not compose replies, so muted outranks thinking; real
+// speech outranks everything, as always.
+let faceMuted = false;
+let greetingUntil = 0;
+const GREET_MS = 6000;
+function faceResolve() {
+  if (playing) return 'talk';
+  if (faceMuted) return 'muted';
+  if (faceThinking) return 'work';
+  if (Date.now() < greetingUntil) return 'make';
+  return 'idle';
+}
+function faceRefresh() { faceShow(faceResolve()); }
 function faceShow(name) {
   try {
-    if (!FACE_VIDS[name]) name = 'idle';
-    faceState = name;
+    if (name === 'muted') {
+      // Muted rides the idle loop in every render mode, with the
+      // .muted treatment (desaturate + badge) on the medallion.
+      faceState = 'muted';
+      face.classList.add('muted');
+      if (WORLD.on) { worldSetState('idle'); return; }
+      if (PUP.on) { puppetSetState('idle'); return; }
+      if (LOOPS_MODE) { faceShowLoops('idle'); return; }
+      name = 'idle';  // hard-switch path below shows the idle clip
+    } else {
+      face.classList.remove('muted');
+      if (!FACE_VIDS[name]) name = 'idle';
+      faceState = name;
+    }
     if (WORLD.on) { worldSetState(name); return; }
     if (PUP.on) { puppetSetState(name); return; }
+    if (LOOPS_MODE) { faceShowLoops(name); return; }
     for (const [k, id] of Object.entries(FACE_VIDS)) {
       const el = document.getElementById(id);
       if (!el) continue;
@@ -280,7 +516,87 @@ function faceShow(name) {
     }
   } catch (e) { /* medallion keeps whatever portrait it has */ }
 }
-function faceTalk(on) { faceShow(on ? 'talk' : 'idle'); }
+// Loops-mode switching (stage v9.2): crossfade at defined in-points
+// with a minimum hold — see the FACE_SPAN block for the why.
+function faceShowLoops(name) {
+  if (name === faceVisible) {
+    if (faceHoldTimer) { clearTimeout(faceHoldTimer); faceHoldTimer = null; }
+    return;
+  }
+  const now = performance.now();
+  const cur = faceVisible;
+  // Preemption: talking enters/leaves with playback exactly; thinking
+  // takes the face from idle/greeting without waiting out a hold.
+  const preempt = !cur || name === 'talk' || cur === 'talk'
+    || name === 'work';
+  if (!preempt && now - faceShownAt < FACE_MIN_HOLD_MS) {
+    if (!faceHoldTimer) {
+      faceHoldTimer = setTimeout(() => {
+        faceHoldTimer = null;
+        try { faceShow(faceResolve()); } catch (e) {}
+      }, FACE_MIN_HOLD_MS - (now - faceShownAt) + 20);
+    }
+    return;
+  }
+  if (faceHoldTimer) { clearTimeout(faceHoldTimer); faceHoldTimer = null; }
+  const inEl = document.getElementById(FACE_VIDS[name]);
+  if (!inEl) return;
+  const outEl = cur ? document.getElementById(FACE_VIDS[cur]) : null;
+  faceVisible = name;
+  faceShownAt = now;
+  if (inEl._fadeT) { clearTimeout(inEl._fadeT); inEl._fadeT = null; }
+  try { inEl.currentTime = FACE_SPAN[name].i; } catch (e) {}
+  inEl.style.display = 'block';
+  inEl.dataset.shown = '1';
+  void inEl.offsetWidth;  // reflow: the fade must run from opacity 0
+  inEl.style.opacity = '1';
+  const p = inEl.play(); if (p && p.catch) p.catch(() => {});
+  if (outEl && outEl !== inEl) {
+    delete outEl.dataset.shown;
+    outEl.style.opacity = '0';
+    if (outEl._fadeT) clearTimeout(outEl._fadeT);
+    outEl._fadeT = setTimeout(() => {
+      if (outEl.dataset.shown !== '1') {
+        outEl.style.display = 'none';
+        try { outEl.pause(); } catch (e) {}
+      }
+    }, FACE_FADE_MS + 60);
+  }
+}
+// Loops init (stage v9.2): mark the medallion for the stacked CSS,
+// show the idle clip at full opacity inside its calm window, and
+// window every clip to its FACE_SPAN while it is the visible one.
+if (LOOPS_MODE) {
+  try {
+    face.dataset.loops = '1';
+    const idleEl = document.getElementById(FACE_VIDS.idle);
+    if (idleEl) {
+      idleEl.dataset.shown = '1';
+      idleEl.style.opacity = '1';
+      const jump = () => { try { idleEl.currentTime = FACE_SPAN.idle.i; } catch (e) {} };
+      if (idleEl.readyState >= 1) jump();
+      else idleEl.addEventListener('loadedmetadata', jump, { once: true });
+    }
+    for (const [k, id] of Object.entries(FACE_VIDS)) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.addEventListener('timeupdate', () => {
+        if (faceVisible !== k) return;
+        const sp = FACE_SPAN[k];
+        if (el.currentTime >= sp.o || el.currentTime < sp.i - 0.05) {
+          try { el.currentTime = sp.i; } catch (e) {}
+        }
+      });
+    }
+  } catch (e) { /* non-fatal: hard-switch rendering still works */ }
+}
+function faceTalk(on) {
+  // Playback boundary (playNext / donePlaying / stopPlayback): the
+  // talking loop is exactly the playback span. On end, re-resolve —
+  // thinking may already be up for the next turn, and it takes the
+  // face the instant speech stops instead of dropping to idle.
+  faceRefresh();
+}
 
 // ---- puppet engine (stage v6) ----
 // A hand-rolled 2D photo-puppet of Lash on a canvas inside the medallion:
@@ -298,18 +614,58 @@ function faceTalk(on) { faceShow(on ? 'talk' : 'idle'); }
 // envelope (text lane, relay-WS and GitHub transports) get a synthesized
 // envelope from the text: one decaying pulse per syllable.
 //
-// Geometry constants mirror puppet/manifest2.json (stage v8 layers:
-// frame = the 1000x1000 region at source (318,20) of the approved
-// front-facing portrait lash-portrait-v2.png, resampled x0.9 onto the
-// 900x900 canvas — see puppet/cut_layers_v2.py).
-const PUP_EAR = {
-  L: {dx: 123, dy: 4, px: 258, py: 338, img: 'earL', dir: -1},
-  R: {dx: 474, dy: 0, px: 625, py: 322, img: 'earR', dir: 1},
+// Face sets (stage v8.2): the SAME engine drives either face; the
+// ?face= query param selects the set and the dog is the default —
+// no param (every existing summon) renders exactly the v8.1 dog.
+// The human set is Howard's swap test (directed in-call 2026-10-15):
+// one driver, two mouths — if the human mouth opens on this pipeline
+// and the dog's reads as motion-without-opening, the muzzle is the
+// limit; if the human stays shut too, the driver is. Geometry mirrors
+// puppet/manifest2.json (dog: frame = the 1000x1000 region at source
+// (318,20) of lash-portrait-v2.png, resampled x0.9 — cut_layers_v2.py)
+// and puppet/manifest3.json (human: Howard's profile photo, the
+// 108x108 region at source (42,17) resampled x8.333 —
+// cut_layers_human.py; landmarks grid-verified on the 900px base).
+const PUP_SETS = {
+  dog: {
+    files: {base: 'puppet2-base.webp', earL: 'puppet2-ear-l.webp',
+            earR: 'puppet2-ear-r.webp', blinkL: 'puppet2-blink-l.webp',
+            blinkR: 'puppet2-blink-r.webp'},
+    need: ['base', 'earL', 'earR'],
+    ear: {
+      L: {dx: 123, dy: 4, px: 258, py: 338, img: 'earL', dir: -1},
+      R: {dx: 474, dy: 0, px: 625, py: 322, img: 'earR', dir: 1},
+    },
+    warp: {x: 215, y: 608, w: 490, h: 282, peakY: 842,
+           mx: 460, my: 655, travel: 36, step: 9, ramp: 1.5,
+           shadowR: 95, shadowGrow: 21, shadowA: 0.60},
+    pivot: [460, 852],
+    blink: {L: [272, 324], R: [516, 311]},
+  },
+  human: {
+    files: {base: 'puppet3-base.webp', blinkL: 'puppet3-blink-l.webp',
+            blinkR: 'puppet3-blink-r.webp'},
+    need: ['base'],
+    // No ear layers: the frame loop skips images that never loaded,
+    // so the ear springs run with nothing to swing (cleanly inert);
+    // breathing sway, thinking tilt, jaw nod and blinks all still run.
+    ear: {
+      L: {dx: 0, dy: 0, px: 0, py: 0, img: 'earL', dir: -1},
+      R: {dx: 0, dy: 0, px: 0, py: 0, img: 'earR', dir: 1},
+    },
+    warp: {x: 380, y: 715, w: 285, h: 180, peakY: 825,
+           mx: 520, my: 754, travel: 44, step: 6, overlap: 9, ramp: 1.8,
+           shadowR: 92, shadowGrow: 36, shadowA: 0.80},
+    pivot: [535, 880],
+    blink: {L: [308, 433], R: [533, 433]},
+    hideVidsEarly: true,
+  },
 };
-const PUP_WARP = {x: 215, y: 608, w: 490, h: 282, peakY: 842,
-                  mx: 460, my: 655, travel: 36, step: 9};
-const PUP_PIVOT = [460, 852];
-const PUP_BLINK = {L: [272, 324], R: [516, 311]};
+const PUPSET = PUP_SETS[qs.get('face')] || PUP_SETS.dog;
+const PUP_EAR = PUPSET.ear;
+const PUP_WARP = PUPSET.warp;
+const PUP_PIVOT = PUPSET.pivot;
+const PUP_BLINK = PUPSET.blink;
 
 function puppetSetState(name) {
   if (name === 'make') PUP.bounceT0 = performance.now();
@@ -387,10 +743,20 @@ function puppetEnable() {
   requestAnimationFrame(puppetFrame);
 }
 (function puppetLoad() {
-  const files = {base: 'puppet2-base.webp', earL: 'puppet2-ear-l.webp',
-                 earR: 'puppet2-ear-r.webp', blinkL: 'puppet2-blink-l.webp',
-                 blinkR: 'puppet2-blink-r.webp'};
-  const need = ['base', 'earL', 'earR'];
+  // Stage v9: in the default (loops) path the retired puppet never
+  // loads — its layers aren't even fetched, so it can never take the
+  // medallion over from the animated loops. ?fx=puppet restores it.
+  if (LOOPS_MODE) return;
+  const files = PUPSET.files;
+  const need = PUPSET.need;
+  if (PUPSET.hideVidsEarly) {
+    // Swap-test face: never flash the dog medallion videos while the
+    // human layers load — the white #face backing shows for a beat.
+    for (const id of Object.values(FACE_VIDS)) {
+      const el = document.getElementById(id);
+      if (el) { el.style.display = 'none'; try { el.pause(); } catch (e) {} }
+    }
+  }
   let ok = 0, dead = false;
   for (const [k, f] of Object.entries(files)) {
     const im = new Image();
@@ -406,7 +772,11 @@ function puppetEnable() {
 function pupProfile(y) {
   const W = PUP_WARP;
   if (y <= W.y) return 0;
-  if (y <= W.peakY) { const t = Math.min(1, (y - W.y) / (W.peakY - W.y) * 1.5); return t * t * (3 - 2 * t); }
+  // Ramp compressed x1.5 (2026-10-15 jaw-visibility fix): displacement
+  // must arrive AT the mouth band, not only deep in the beard — with
+  // the old linear ramp the mouth line itself moved ~2px at full jaw
+  // and the motion was invisible at Meet tile sizes (harness-measured).
+  if (y <= W.peakY) { const t = Math.min(1, (y - W.y) / (W.peakY - W.y) * (W.ramp || 1.5)); return t * t * (3 - 2 * t); }
   return Math.max(0.45, 1 - 0.55 * (y - W.peakY) / (W.y + W.h - W.peakY));
 }
 
@@ -470,19 +840,22 @@ function puppetFrame(ts) {
       for (let y0 = W.y; y0 < W.y + W.h; y0 += W.step) {
         const off = pupProfile(y0 + W.step / 2) * W.travel * PUP.jaw;
         if (off < 0.2) continue;
-        ctx.drawImage(base, W.x, y0, W.w, W.step + 6,
-                      W.x, y0 + off, W.w, W.step + 6);
+        ctx.drawImage(base, W.x, y0, W.w, W.step + (W.overlap || 6),
+                      W.x, y0 + off, W.w, W.step + (W.overlap || 6));
       }
-      // soft mouth shadow that grows as the jaw opens
-      const g = ctx.createRadialGradient(W.mx, W.my, 4, W.mx, W.my, 95);
-      g.addColorStop(0, `rgba(26,18,12,${0.60 * PUP.jaw})`);
+      // soft mouth shadow that grows as the jaw opens — deepened
+      // (2026-10-15): at alpha 0.34 it measured +1.8 luminance against
+      // the closed mouth, i.e. no visible oral cavity at all.
+      const SR = W.shadowR || 95;
+      const g = ctx.createRadialGradient(W.mx, W.my, 4, W.mx, W.my, SR);
+      g.addColorStop(0, `rgba(26,18,12,${(W.shadowA || 0.60) * PUP.jaw})`);
       g.addColorStop(1, 'rgba(26,18,12,0)');
       ctx.save();
       ctx.translate(W.mx, W.my);
-      ctx.scale(1, (5 + 21 * PUP.jaw) / 95);
+      ctx.scale(1, (5 + (W.shadowGrow || 21) * PUP.jaw) / SR);
       ctx.translate(-W.mx, -W.my);
       ctx.fillStyle = g;
-      ctx.fillRect(W.mx - 95, W.my - 95, 190, 190);
+      ctx.fillRect(W.mx - SR, W.my - SR, 2 * SR, 2 * SR);
       ctx.restore();
     }
     for (const side of ['L', 'R']) {
@@ -507,6 +880,28 @@ function puppetFrame(ts) {
     ctx.restore();
   } catch (e) { /* a bad frame must never kill the stage */ }
 }
+// Debug/test handle for the face state machine (stage v9): the loops
+// harness reads the resolved state and which video is actually shown.
+window.__lashFace = {
+  state: () => faceState,
+  thinking: () => faceThinking,
+  muted: () => faceMuted,
+  mode: () => (LOOPS_MODE ? 'loops' : FX),
+  visible: () => {
+    // Loops mode (v9.2): the shown clip is the one holding
+    // dataset.shown through the crossfade; fall back to the display
+    // check (puppet/world paths never set it).
+    for (const [k, id] of Object.entries(FACE_VIDS)) {
+      const el = document.getElementById(id);
+      if (el && el.dataset && el.dataset.shown === '1') return k;
+    }
+    for (const [k, id] of Object.entries(FACE_VIDS)) {
+      const el = document.getElementById(id);
+      if (el && el.style.display !== 'none') return k;
+    }
+    return null;
+  },
+};
 // Debug/test handle (local harness drives the puppet through this).
 window.__lashPuppet = {
   pup: PUP,
@@ -519,14 +914,146 @@ window.__lashPuppet = {
 
 // ---- captions: ONLY what is actually being said ----
 // Howard's directive (2026-10-16 late, after the bdca070d84 live
-// test) — identical rule to the deployed Pages stage
-// (lash-stage-repo/stage.html): a line's text appears ONLY when its
-// audio starts playing (play() resolved / utterance onstart), never
-// at queue time; when playback is stopped early the caption is
-// truncated to the spoken portion from the audio element's own
-// clock (word-proportional, the bridge's split), or cleared when
-// there is no trustworthy position (text lane). A line played out
-// in full keeps its caption — it was actually said.
+// test): the stage showed composed text he could read before — and
+// without — it being spoken, so a cut-off line left text on screen
+// that was never said. The rule, enforced at every caption write:
+//   * a line's text appears ONLY when its audio starts playing
+//     (play() resolved on the audio lane; utterance onstart on the
+//     text lane) — never at queue time, never while queued, never
+//     during the by-reference fetch;
+//   * when playback is stopped early (barge-in / flush), the caption
+//     is truncated to the spoken portion — the same word-proportional
+//     split the bridge computes from this stage's played-duration
+//     accounting (currentAudio.currentTime / duration) — and with
+//     no trustworthy position (text lane, no clock) it is cleared:
+//     unaccounted text was never shown as said;
+//   * a line that plays out in full keeps its caption (it WAS said)
+//     until the next line's audio starts.
+//   * WORD REVEAL (Howard, 2026-10-18): within those rules, the
+//     caption no longer flashes the whole sentence at play-start —
+//     words appear one by one IN SYNC with the audio (the reveal
+//     clock is the playing audio element's own currentTime /
+//     duration), each word staying up until its phrase completes or
+//     runs out of room, when the display switches to the next
+//     phrase. A cut line freezes on its current phrase's revealed
+//     prefix — never more than was actually heard.
+
+/*CAPTION-REVEAL-BEGIN*/
+// Pure scheduling logic for the word reveal (extracted by
+// harness_caption.js — no DOM in this block).
+// Timing source: the clause's REAL audio duration. The TTS render
+// carries no per-word timestamps, so words are scheduled
+// PROPORTIONALLY across the duration (each word owns an equal
+// share) — word k appears at the start of its share. Phrase
+// grouping is by rendered room: one visual line of the caption
+// element (~88 chars at its 900px / 20px styling) per phrase.
+const CAPTION_PHRASE_MAX_CHARS = 88;
+function captionWords(text) {
+  return (text || '').split(/\s+/).filter(Boolean);
+}
+function captionPhrases(text, maxChars) {
+  const words = captionWords(text);
+  const phrases = [];
+  let start = 0, len = 0;
+  for (let i = 0; i < words.length; i++) {
+    const wlen = words[i].length + (i > start ? 1 : 0);
+    if (i > start && len + wlen > maxChars) {
+      phrases.push({start, end: i});
+      start = i; len = words[i].length;
+    } else len += wlen;
+  }
+  if (words.length) phrases.push({start, end: words.length});
+  return phrases;
+}
+function captionVisible(text, revealed, maxChars) {
+  const words = captionWords(text);
+  if (!words.length || revealed <= 0) return '';
+  const n = Math.min(revealed, words.length);
+  const phrases = captionPhrases(text, maxChars);
+  let ph = phrases[phrases.length - 1];
+  for (const p of phrases) {
+    if (n - 1 >= p.start && n - 1 < p.end) { ph = p; break; }
+  }
+  return words.slice(ph.start, n).join(' ');
+}
+function captionAt(text, posMs, durMs, maxChars) {
+  // The caption string at playback position posMs of durMs: words
+  // revealed proportionally, windowed to the current phrase.
+  const words = captionWords(text);
+  if (!words.length || !(durMs > 0)) return '';
+  const frac = Math.min(1, Math.max(0, posMs / durMs));
+  const revealed = frac >= 1 ? words.length
+    : Math.min(words.length, Math.floor(frac * words.length) + 1);
+  return captionVisible(text, revealed, maxChars);
+}
+function captionAtChar(text, charIndex, maxChars) {
+  // Text-lane variant: speechSynthesis boundary events report the
+  // character offset of the word now starting — reveal every word
+  // whose start offset has been reached, phrase-windowed as above.
+  const words = captionWords(text);
+  if (!words.length) return '';
+  let off = 0, revealed = 0;
+  for (let i = 0; i < words.length; i++) {
+    if (off <= charIndex) revealed = i + 1;
+    off += words[i].length + 1;
+  }
+  return captionVisible(text, revealed, maxChars);
+}
+/*CAPTION-REVEAL-END*/
+
+let captionTimer = null;
+function stopCaptionReveal() {
+  if (captionTimer) { clearInterval(captionTimer); captionTimer = null; }
+}
+function captionNowText(item) {
+  // The reveal string for the playing item RIGHT NOW, from the
+  // audio element's own clock. Duration unknown yet (metadata not
+  // in): the sound has started, so the word being spoken is the
+  // first — show exactly that until the clock firms up.
+  if (!currentAudio) return '';
+  const pos = currentAudio.currentTime, dur = currentAudio.duration;
+  if (isFinite(pos) && isFinite(dur) && dur > 0)
+    return captionAt(item.text, pos * 1000, dur * 1000,
+                     CAPTION_PHRASE_MAX_CHARS);
+  const w = captionWords(item.text);
+  return w.length ? w[0] : '';
+}
+function startCaptionReveal(item) {
+  stopCaptionReveal();
+  if (currentItem !== item || !playing) return;
+  item._capStarted = true;
+  captionEl.textContent = captionNowText(item);
+  captionTimer = setInterval(() => {
+    if (currentItem !== item || !playing || !currentAudio) {
+      stopCaptionReveal(); return;
+    }
+    const t = captionNowText(item);
+    if (t !== captionEl.textContent) captionEl.textContent = t;
+  }, 50);
+}
+function finishCaption(item) {
+  // Played out in full: every word WAS said — leave the final
+  // phrase standing complete (earlier phrases were shown as they
+  // played). A line that never started leaves the caption alone.
+  stopCaptionReveal();
+  if (item && item._capStarted)
+    captionEl.textContent = captionAt(item.text, 1, 1,
+                                      CAPTION_PHRASE_MAX_CHARS);
+}
+function captionFreezeText(item) {
+  // A cut line's frozen caption: the current phrase's revealed
+  // prefix at the stop position — never more than was spoken. No
+  // audio clock (text lane): nothing trustworthy — clear.
+  if (!item || !item.text || !currentAudio) return '';
+  try {
+    const pos = currentAudio.currentTime,
+          dur = currentAudio.duration;
+    if (!isFinite(pos) || !isFinite(dur) || !dur)
+      return spokenCaptionPortion(item);
+    return captionAt(item.text, pos * 1000, dur * 1000,
+                     CAPTION_PHRASE_MAX_CHARS);
+  } catch (e) { return spokenCaptionPortion(item); }
+}
 function spokenCaptionPortion(item) {
   if (!item || !item.text) return '';
   if (!currentAudio) return '';
@@ -545,14 +1072,23 @@ function spokenCaptionPortion(item) {
   return words.slice(0, n).join(' ');
 }
 function showCaption(item) {
-  if (currentItem === item && playing)
-    captionEl.textContent = item.text;
+  // Text-lane start (synthesis onstart): sound is actually starting
+  // — only now may text appear, and under the word-reveal rule it
+  // is the FIRST word only; boundary events advance the reveal
+  // (playNext wires onboundary). A line stopped during start-up
+  // never gets captioned at all.
+  if (currentItem === item && playing) {
+    item._capStarted = true;
+    const w = captionWords(item.text);
+    captionEl.textContent = w.length ? w[0] : '';
+  }
 }
 
 // ---- playback ----
 async function playNext() {
   if (playing || queue.length === 0) return;
   const item = queue.shift();
+  lashTrace('play_start', item.seq, {pos_ms: 0});
   playing = true;
   currentItem = item;
   currentText = item.text;
@@ -572,9 +1108,17 @@ async function playNext() {
       u.voice = v;
       u.rate = item.rate || 1.0;
       u.pitch = item.pitch ?? 1.0;
-      // Caption only when the synthesis actually starts speaking
-      // (caption rule — never at queue/speak() call time).
+      // Caption only when the synthesis actually starts speaking —
+      // never at queue/speak() call time (see the caption rule).
       u.onstart = () => showCaption(item);
+      // Word reveal, text lane: boundary events give the offset of
+      // the word now starting — advance the caption to it.
+      u.onboundary = (ev) => {
+        if (currentItem === item && ev
+            && typeof ev.charIndex === 'number')
+          captionEl.textContent = captionAtChar(
+            item.text, ev.charIndex, CAPTION_PHRASE_MAX_CHARS);
+      };
       u.onend = () => {
         if (upCh) upCh.publish('control',
           {type: 'speech_done', seq: item.seq, ok: true});
@@ -602,14 +1146,19 @@ async function playNext() {
     currentAudio.onerror = () => donePlaying(item);
     puppetLineStart(item);
     await currentAudio.play();
-    // play() resolved: the audio is actually sounding NOW — the
-    // first moment the line's text may appear (caption rule).
-    showCaption(item);
+    // play() resolved: the audio is actually sounding NOW — this is
+    // the first moment the line's text may appear (caption rule),
+    // and it appears WORD BY WORD from here (word-reveal rule).
+    startCaptionReveal(item);
   } catch (e) { donePlaying(item); }
 }
 function donePlaying(item) {
-  // Played out in full: the caption stays — it was actually said.
-  // Early stops go through stopPlayback(), which truncates.
+  // Played out in full: the caption stays — every word of it was
+  // actually said (caption rule); the reveal settles on the final
+  // phrase standing complete. Early stops go through
+  // stopPlayback(), which freezes the reveal instead.
+  emitPlayEnd(item, false);
+  finishCaption(item);
   playing = false;
   currentItem = null;
   currentAudio = null;
@@ -622,17 +1171,28 @@ function donePlaying(item) {
 }
 function stopPlayback() {
   queue.length = 0;
+  stopCaptionReveal();
   // Caption rule (Howard, 2026-10-16): the unspoken remainder of a
-  // cut line must never stay on screen — truncate to the spoken
-  // portion from the audio clock BEFORE teardown ('' when there is
-  // no trustworthy position; a cut text-lane line clears outright).
-  const spokenCaption = spokenCaptionPortion(currentItem);
+  // cut line must never stay on screen. Freeze the word reveal at
+  // the audio element's own clock BEFORE anything is torn down —
+  // the same position emitPlayEnd reports to the bridge — leaving
+  // the current phrase's revealed prefix ('' when there is no
+  // trustworthy position: the text lane has no clock, so a cut
+  // text-lane line's caption clears outright).
+  const spokenCaption = captionFreezeText(currentItem);
+  // Playback accounting: a cut line still gets its play_end — with
+  // stopped=true and the position where it died — BEFORE the audio
+  // element is torn down. A stop the bridge never hears about would
+  // leave the brain believing the whole line was said.
+  emitPlayEnd(currentItem, true);
   captionEl.textContent = spokenCaption;
   currentItem = null;
-  // Also drop half-delivered speech: a line still waiting in the pairing
-  // buffers for its audio frame (or vice versa) is queued in everything
-  // but name — if its other half arrives after a flush, pairSpeech would
-  // resurrect the very line the barge-in just killed (2026-10-15 fix).
+  // RECALL-OPT defect-3 hardening (re-applying the 2026-10-15 fix
+  // the production file lost): also drop half-delivered speech — a
+  // line still waiting in the pairing buffers for its audio frame
+  // (or vice versa) is queued in everything but name; if its other
+  // half arrives after a flush, pairSpeech would resurrect the very
+  // line the barge-in just killed.
   try {
     pendingLines.clear();
     for (const u of pendingAudio.values()) {
@@ -650,6 +1210,12 @@ function stopPlayback() {
 }
 
 // ---- Recall in-page transcript stream (only works inside the bot) ----
+// RE-BASED 2026-10-18 (defects 3+4): this handler is the ONLY
+// recall-opt delta in this file. The rest of the page is the
+// production stage (lash-stage repo stage.html) untouched — the
+// earlier opt fork was built from a stale local copy and had
+// silently lost the v9 playback telemetry (lashTrace play_start/
+// play_end), the loops-mode face, and the v9.4 caption rules.
 // Final utterances go to the u/ stream; speech while Lash is talking is a
 // barge-in: stop locally at once and drop a control note in c/.
 //
@@ -763,13 +1329,34 @@ try {
       ghPutJSON(`${SESS}/c/${obj.ts}-schema.json`, obj);
     else if (relay.readyState === 1) relay.send(JSON.stringify(obj));
   }
+  // RECALL-OPT defect-2 instrumentation (2026-10-18): the practice
+  // run produced ZERO forwarded partials and the logs could not say
+  // whether the in-page stream ever delivered a non-final message.
+  // Count all three and report once — on the first non-final, or
+  // after 45 s — so the next live run settles it from its own log.
+  const streamCounts = {finals: 0, nonfinals: 0, partials_forwarded: 0};
+  let schema2Sent = false;
+  function sendSchema2(note) {
+    if (schema2Sent) return;
+    schema2Sent = true;
+    try {
+      sendControl({type: 'transcript_schema2', ts: Date.now(), note,
+                   finals: streamCounts.finals,
+                   nonfinals: streamCounts.nonfinals,
+                   partials_forwarded: streamCounts.partials_forwarded});
+    } catch (e) { /* probe is best-effort */ }
+  }
+  function forwardPartial(speaker, text, wall) {
+    streamCounts.partials_forwarded++;
+    sendUp('partial', speaker, text, wall);
+  }
   // A partial that simply stops changing is forwarded even when no
   // further transcript message arrives to observe it.
   setInterval(() => {
     const now = Date.now();
     for (const [key, trk] of partialTrackers) {
       const fwd = trk.poll(now);
-      if (fwd) sendUp('partial', trk.speakerName || 'unresolved', fwd, now);
+      if (fwd) forwardPartial(trk.speakerName || 'unresolved', fwd, now);
     }
   }, 250);
 
@@ -784,13 +1371,15 @@ try {
     const key = speakerKeyOf(m, speaker);
     if (!schemaProbed) {
       schemaProbed = true;
+      setTimeout(() => sendSchema2('no nonfinal within 45s of first message'), 45000);
       try {
         sendControl({type: 'transcript_schema', ts: recvWall,
                      top_keys: Object.keys(m || {}),
                      data_keys: Object.keys(m.data || {}),
                      transcript_keys: Object.keys(tr || {}),
                      word_keys: Object.keys(words[0] || {}),
-                     speaker_resolved: speaker});
+                     speaker_resolved: speaker,
+                     has_is_final: ('is_final' in tr)});
       } catch (e) { /* probe is best-effort */ }
     }
     if (playing) {
@@ -809,6 +1398,8 @@ try {
     }
     const isFinal = tr.is_final !== false;
     if (!isFinal) {
+      streamCounts.nonfinals++;
+      if (streamCounts.nonfinals === 1) sendSchema2('first nonfinal seen');
       let trk = partialTrackers.get(key);
       if (!trk) {
         trk = createPartialTracker();
@@ -817,13 +1408,15 @@ try {
       }
       trk.speakerName = speaker;
       const fwd = trk.observe(text, recvWall);
-      if (fwd) sendUp('partial', speaker, fwd, recvWall);
+      if (fwd) forwardPartial(speaker, fwd, recvWall);
       return;
     }
+    streamCounts.finals++;
     const trk = partialTrackers.get(key);
     if (trk) trk.reset();
     if (text !== lastSentByKey.get(key)) {
       lastSentByKey.set(key, text);
+      greetingUntil = 0;   // a real utterance ends any greeting window
       heardEl.textContent = speaker + ': ' + text;
       sendUp('final', speaker, text, recvWall);
     }
@@ -960,6 +1553,17 @@ function worldFail(stage, err) {
 }
 
 (async () => {
+  // Stage v9: the loops own the medallion by default — the world is
+  // not selected, so it never probes WebGL, never fetches three.js or
+  // the model, and can never take the face over. ?fx=world restores
+  // the full v7 build path below, untouched.
+  if (window.__LASH_LOOPS_MODE__) {
+    WDIAG.stage = 'loops';
+    WDIAG.threeImport = 'skipped';
+    WDIAG.modelFetch = 'skipped';
+    worldNotify();
+    return;
+  }
   let THREE, GLTFLoader;
   try {
     const probe = document.createElement('canvas');
