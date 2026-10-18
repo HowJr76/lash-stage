@@ -1010,6 +1010,11 @@ try {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     const tr = m.transcript || m.data?.transcript || {};
     const words = tr.words || [];
+    const spk = (tr.participant && tr.participant.name) ||
+                (m.participant && m.participant.name) ||
+                (m.data && m.data.participant && m.data.participant.name) ||
+                (m.data && m.data.data && m.data.data.participant &&
+                 m.data.data.participant.name) || 'Howard';
     const text = words.map(w => w.text).join(' ').trim();
     if (!text) return;
     if (playing) {
@@ -1030,14 +1035,14 @@ try {
     if (isFinal && text !== lastSent) {
       lastSent = text;
       greetingUntil = 0;   // a real utterance ends any greeting window
-      heardEl.textContent = 'Howard: ' + text;
+      heardEl.textContent = spk + ': ' + text;
       if (liveMode && upCh) {
-        upCh.publish('utterance', {speaker: 'Howard', text, ts: Date.now()});
+        upCh.publish('utterance', {speaker: spk, text, ts: Date.now()});
       } else if (ghMode) {
         ghPutJSON(`${SESS}/u/${Date.now()}-${Math.random().toString(36).slice(2,8)}.json`,
-                  {speaker: 'Howard', text, ts: Date.now()});
+                  {speaker: spk, text, ts: Date.now()});
       } else if (relay.readyState === 1) {
-        relay.send(JSON.stringify({type:'transcript_final', speaker:'Howard', text}));
+        relay.send(JSON.stringify({type:'transcript_final', speaker: spk, text}));
       }
     }
   };
