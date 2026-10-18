@@ -44,6 +44,7 @@ const els = {
   medallion: $('medallion'), pill: $('presencePill'), status: $('statusLine'),
   connDot: $('connDot'), connText: $('connText'),
   threadWrap: $('threadWrap'), thread: $('thread'), threadEmpty: $('threadEmpty'),
+  clearBtn: $('clearThread'), earlierBtn: $('toggleEarlier'),
   talk: $('talkBtn'), mute: $('muteBtn'), type: $('typeBtn'), end: $('endBtn'),
   composer: $('composer'), typeInput: $('typeInput'), send: $('sendBtn'),
   levelFill: $('levelFill'), levelState: $('levelState'),
@@ -205,6 +206,28 @@ const turns = new Map(); // turn_id -> { entry, clauses: Map(clause_idx -> claus
 function saveThread() {
   try { localStorage.setItem(THREAD_KEY, JSON.stringify(threadModel.slice(-300))); } catch (e) {}
 }
+/* Session filter (Howard, 2026-10-18): once he joins, only this session's
+ * lines show; earlier lines stay in the model, hidden, one tap away.
+ * Clear log wipes the model + storage outright. */
+let sessionStartTs = 0;
+let showEarlier = false;
+function entryHidden(entry) {
+  return !showEarlier && sessionStartTs > 0 && (entry.ts || 0) < sessionStartTs;
+}
+function applySessionFilter() {
+  let hidden = 0;
+  for (const e of threadModel) {
+    if (e._node) {
+      const h = entryHidden(e);
+      e._node.style.display = h ? 'none' : '';
+      if (h) hidden++;
+    }
+  }
+  if (els.earlierBtn) {
+    els.earlierBtn.hidden = hidden === 0 && !showEarlier;
+    els.earlierBtn.textContent = showEarlier ? 'Hide earlier' : 'Show earlier (' + hidden + ')';
+  }
+}
 function stickScroll() {
   const w = els.threadWrap;
   const nearBottom = w.scrollHeight - w.scrollTop - w.clientHeight < 140;
@@ -235,6 +258,7 @@ function renderEntry(entry) {
     node.appendChild(meta);
     paintBubble(entry, node);
   }
+  if (entryHidden(entry)) node.style.display = 'none';
   els.thread.appendChild(node);
   entry._node = node;
   return node;
@@ -494,6 +518,8 @@ async function connect() {
   room.on('disconnected', () => { teardown('Disconnected from the server.'); });
   await room.connect(cfg.url, token);
   connected = true;
+  sessionStartTs = Date.now();
+  applySessionFilter();
   setConn('on', 'connected to ' + cfg.url);
   if (room.remoteParticipants && [...room.remoteParticipants.values()].some((p) => p.identity === cfg.agentIdentity)) agentJoined();
   try { await room.startAudio(); } catch (e) {}
@@ -623,6 +649,19 @@ els.typeInput.addEventListener('keydown', (e) => {
 });
 
 els.end.addEventListener('click', () => { if (connected || SIM) endSession(); });
+if (els.clearBtn) els.clearBtn.addEventListener('click', () => {
+  threadModel = [];
+  saveThread();
+  els.thread.innerHTML = '';
+  els.threadEmpty.style.display = '';
+  sessionStartTs = Date.now();
+  showEarlier = false;
+  applySessionFilter();
+});
+if (els.earlierBtn) els.earlierBtn.addEventListener('click', () => {
+  showEarlier = !showEarlier;
+  applySessionFilter();
+});
 
 /* ========================= guided test mode =========================
  * TEST-PROTOCOL.md v1.1 (Howard, 2026-10-16): the same 8 maneuvers
