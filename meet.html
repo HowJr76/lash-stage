@@ -3,15 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Muse in a Meeting · Moseley Innovations</title>
-<meta name="description" content="Bring your own AI assistant into live video meetings—with its own tile, face, and voice. It listens, speaks, answers questions, and follows up.">
-<meta property="og:title" content="Muse in a Meeting">
+<title>Muse Line · Moseley Innovations</title>
+<meta name="theme-color" content="#42388C">
+<meta name="description" content="Muse Line brings your own AI assistant into live video meetings—with its own tile, face, and voice. It listens, speaks, answers questions, and follows up.">
+<meta property="og:title" content="Muse Line">
 <meta property="og:description" content="Bring your own AI assistant into live video meetings—with its own tile, face, and voice. It listens, speaks, answers questions, and follows up.">
 <meta property="og:type" content="website">
-<meta property="og:image" content="https://howjr76.github.io/lash-stage/muse-in-a-meeting-og.png">
+<meta property="og:image" content="https://howjr76.github.io/lash-stage/muse-line-card.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://howjr76.github.io/lash-stage/muse-in-a-meeting-og.png">
-<link rel="icon" type="image/svg+xml" href="muse-in-a-meeting-icon.svg">
+<meta name="twitter:image" content="https://howjr76.github.io/lash-stage/muse-line-card.png">
+<link rel="icon" type="image/png" href="signal-micro.png">
+<link rel="apple-touch-icon" href="signal-micro.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -21,20 +23,20 @@
   body {
     font-family: "Manrope", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     background:
-      radial-gradient(900px 480px at 85% 0%, rgba(25,211,197,.14) 0%, rgba(25,211,197,0) 60%),
-      linear-gradient(180deg, #ffffff 0%, #f2fafa 55%, #e9f6f6 100%);
+      radial-gradient(900px 480px at 85% 0%, rgba(66,56,140,.10) 0%, rgba(66,56,140,0) 60%),
+      linear-gradient(180deg, #ffffff 0%, #f4f4fb 55%, #eceef9 100%);
     color: #071b2c;
     padding: 28px 18px 44px;
   }
   .wrap { max-width: 1020px; margin: 0 auto; }
 
-  /* House brand bar — Moseley Innovations is the maker */
+  /* Product brand bar — Muse Line (The Signal); Moseley Innovations is the maker, in the footer */
   .house { display: flex; align-items: center; gap: 14px; padding-bottom: 8px; }
-  .house img { width: 44px; height: 44px; border-radius: 10px; border: 1px solid rgba(14,148,136,.40); }
-  .house .wm { font-size: 17px; font-weight: 800; letter-spacing: .14em; color: #071b2c; }
-  .house .wm .accent { color: #0e9488; }
+  .house img { height: 34px; width: auto; display: block; }
+  .house .wm { font-size: 21px; font-weight: 600; letter-spacing: .01em; color: #071b2c; }
+  .house .wm b { font-weight: 800; }
 
-  /* Product identity + hero copy (panel copy of record) */
+  /* Product identity + hero copy */
   .lockup { display: block; width: min(600px, 92%); margin: 18px auto 4px; }
   h1 {
     text-align: center; margin: 26px auto 14px;
@@ -61,7 +63,7 @@
     border-radius: 14px; padding: 22px 20px 20px;
     box-shadow: 0 8px 22px rgba(7,27,44,.06);
   }
-  .benefit .tick { width: 34px; height: 3px; border-radius: 2px; background: linear-gradient(90deg, #19d3c5, #0e9488); margin-bottom: 14px; }
+  .benefit .tick { width: 34px; height: 3px; border-radius: 2px; background: linear-gradient(90deg, #38E1F2, #42388C); margin-bottom: 14px; }
   .benefit h2 { margin: 0 0 8px; font-size: 17px; line-height: 1.35; font-weight: 700; color: #071b2c; }
   .benefit p { margin: 0; font-size: 15px; line-height: 1.55; color: #33566b; }
 
@@ -71,13 +73,13 @@
     display: inline-flex; align-items: center; justify-content: center;
     width: 100%; max-width: 420px; min-height: 52px;
     padding: 14px 24px; border-radius: 8px;
-    background: #19d3c5;
-    color: #071b2c; font-size: 19px; font-weight: 700; letter-spacing: .01em;
+    background: #38E1F2;
+    color: #0B2239; font-size: 19px; font-weight: 700; letter-spacing: .01em;
     text-decoration: none;
-    box-shadow: 0 12px 28px rgba(25,211,197,.38);
+    box-shadow: 0 12px 28px rgba(56,225,242,.38);
     transition: transform .12s ease, box-shadow .12s ease;
   }
-  .join:hover, .join:focus { transform: translateY(-1px); box-shadow: 0 16px 34px rgba(25,211,197,.48); }
+  .join:hover, .join:focus { transform: translateY(-1px); box-shadow: 0 16px 34px rgba(56,225,242,.48); }
   .note { margin: 14px 0 0; font-size: 13px; color: #64808f; }
 
   /* Maker branding lives in the footer (panel spec) */
@@ -98,17 +100,16 @@
 <body>
   <div class="wrap">
     <header class="house">
-      <img src="mi-logo.jpg" alt="Moseley Innovations logo">
-      <div class="wm">MOSELEY <span class="accent">INNOVATIONS</span></div>
+      <img src="signal-capsule.png" alt="Muse Line — The Signal">
+      <div class="wm">Muse <b>Line</b></div>
     </header>
 
     <main>
-      <img class="lockup" src="muse-in-a-meeting-lockup.svg" alt="Muse in a Meeting — Put your Muse in the meeting. By Moseley Innovations">
       <h1>Put your Muse<br>in the meeting.</h1>
       <p class="subhead">Bring your own AI assistant into live video meetings—with its own tile, face, and voice. It listens, speaks, answers questions, and follows up.</p>
-      <img class="hero" src="muse-in-a-meeting-hero.png" alt="Muse in a Meeting: a bright video call where the Muse sits in its own tile as a fourth participant, answering a question about launch reporting">
+      <img class="hero" src="muse-in-a-meeting-hero.png" alt="Muse Line: a bright video call where the Muse sits in its own tile as a fourth participant, answering a question about launch reporting">
 
-      <section class="benefits" aria-label="What Muse in a Meeting does">
+      <section class="benefits" aria-label="What Muse Line does in a meeting">
         <div class="benefit">
           <div class="tick"></div>
           <h2>Get input while you weigh the options.</h2>
@@ -133,9 +134,7 @@
     </main>
 
     <footer>
-      <div class="maker">Muse in a Meeting &middot; by Moseley Innovations</div>
-      <div class="campaign">From Manual to Modern</div>
-      <div class="tagline">AI &middot; Automation &middot; Content Systems &middot; Government Solutions</div>
+      <div class="maker">Muse Line &middot; by Moseley Innovations</div>
     </footer>
   </div>
 </body>
