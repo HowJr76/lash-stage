@@ -3,15 +3,26 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="theme-color" content="#0d1117">
+<meta name="theme-color" content="#42388C">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Home Room — Lash</title>
+<title>Muse Line — Home Room</title>
+<link rel="icon" type="image/png" href="assets/signal-micro.png">
+<link rel="apple-touch-icon" href="assets/signal-micro.png">
+<meta name="description" content="Muse Line — talk to your Muse, live. By Moseley Innovations.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Muse Line">
+<meta property="og:description" content="A direct signal to your Muse. Tap to open the line.">
+<meta property="og:image" content="https://howjr76.github.io/lash-stage/home-room/assets/muse-line-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Muse Line">
+<meta name="twitter:description" content="A direct signal to your Muse. Tap to open the line.">
+<meta name="twitter:image" content="https://howjr76.github.io/lash-stage/home-room/assets/muse-line-card.png">
 <style>
   :root{
     --bg:#0d1117; --panel:#161c26; --panel2:#1d2635; --line:#2a3648;
     --ink:#e8eef6; --dim:#93a3b8; --faint:#5d6f86;
-    --accent:#ffb454; --accent-ink:#23180a;
+    --accent:#38E1F2; --accent-ink:#0B2239;
     --ok:#3fb97c; --warn:#e5b83b; --bad:#e5604f;
     --bubble-lash:#1d2635; --bubble-me:#2c4a73;
     --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
@@ -23,10 +34,21 @@
     font:16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     display:flex; flex-direction:column; height:100dvh; overflow:hidden;
   }
+  /* ---------- brand bar (Muse Line · The Signal) ---------- */
+  #brandBar{
+    display:flex; align-items:center; gap:10px;
+    padding:calc(8px + var(--sat)) 16px 8px;
+    background:#12182b; border-bottom:1px solid var(--line);
+    flex:0 0 auto;
+  }
+  #brandCapsule{height:24px; width:auto; display:block}
+  #brandName{font-size:16.5px; font-weight:500; letter-spacing:.2px; color:var(--ink)}
+  #brandName b{font-weight:800}
+  #brandMaker{margin-left:auto; font-size:12px; color:var(--faint)}
   /* ---------- presence card ---------- */
   header{
     display:flex; align-items:center; gap:14px;
-    padding:calc(10px + var(--sat)) 16px 10px;
+    padding:10px 16px 10px;
     background:var(--panel); border-bottom:1px solid var(--line);
     flex:0 0 auto;
   }
@@ -119,7 +141,7 @@
   .ctl small{font-size:11px; color:var(--dim); font-weight:500}
   .ctl:disabled{opacity:.38}
   .ctl.primary{background:var(--accent); color:var(--accent-ink); border-color:var(--accent); flex:1.35 1 0}
-  .ctl.primary small{color:#5c4318}
+  .ctl.primary small{color:#0e4a55}
   .ctl.live{background:var(--ok); border-color:var(--ok); color:#07251a}
   .ctl.live small{color:#0b4630}
   .ctl.danger{color:#ff9c8f}
@@ -148,7 +170,7 @@
   #sheetErr{color:var(--bad); font-size:13.5px; min-height:18px; margin-top:10px}
   /* ---------- guided test card ---------- */
   #testCard{
-    flex:0 0 auto; background:#241a08; border-top:2px solid var(--accent);
+    flex:0 0 auto; background:#191536; border-top:2px solid var(--accent);
     border-bottom:2px solid var(--accent); padding:12px 14px calc(10px);
   }
   #testCard[hidden]{display:none}
@@ -191,6 +213,12 @@
 </style>
 </head>
 <body>
+
+<div id="brandBar">
+  <img id="brandCapsule" src="assets/signal-capsule.png" alt="Muse Line — The Signal">
+  <span id="brandName">Muse <b>Line</b></span>
+  <span id="brandMaker">by Moseley Innovations</span>
+</div>
 
 <header>
   <div id="medallion" class="away">
