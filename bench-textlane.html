@@ -1,0 +1,233 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Lash · Text-Lane Bench</title>
+<body style="background:#101418;color:#e8f0f2;font-family:monospace;margin:0;padding:24px">
+<div id="big" style="font-size:44px;margin-bottom:16px">TEXT-LANE BENCH — loading</div>
+<pre id="log" style="font-size:15px;white-space:pre-wrap"></pre>
+<script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
+<script>
+'use strict';
+// Text-lane bench page (2026-10-19). NOT the production stage. Drives
+// itself from driver commands on a private Ably channel and publishes
+// every event with page-clock stamps (performance.now ms since load).
+// Variants: A = speechSynthesis, C = WebAudio tone + generated WAV via
+// <audio> (incumbent-path control), B1 = Piper in-page model,
+// B0 = meSpeak in-page formant synth (floor proof).
+const qs = new URLSearchParams(location.search);
+const RUN = qs.get('run') || 'dev';
+const CHNAME = qs.get('ch') || ('bench-' + RUN);
+const KEY = qs.get('k') || '';
+const big = document.getElementById('big');
+const logEl = document.getElementById('log');
+const pt = () => Math.round(performance.now());
+let ably = null, ch = null, gotCmd = false;
+
+function show(s) { big.textContent = s; }
+function ev(name, data) {
+  const m = Object.assign({ev: name, pt: pt(), wall: Date.now(), run: RUN}, data || {});
+  try { logEl.textContent += JSON.stringify(m) + '\n'; } catch (e) {}
+  if (ch) { try { ch.publish('bench', m); } catch (e) {} }
+  return m;
+}
+window.addEventListener('error', (e) => ev('page_error', {msg: String(e.message || e.error || 'unknown')}));
+
+// ---------- variant A: speechSynthesis ----------
+function voicesNow() {
+  try {
+    return (window.speechSynthesis ? speechSynthesis.getVoices() : [])
+      .map(v => ({name: v.name, lang: v.lang, local: !!v.localService, def: !!v.default}));
+  } catch (e) { return [{error: String(e)}]; }
+}
+function enumerate(tag) { ev('voices', {tag, list: voicesNow()}); }
+function doSpeak(tag, text) {
+  gotCmd = true;
+  ev('speak_cmd', {tag, text});
+  try {
+    const vs = speechSynthesis.getVoices();
+    const v = vs.find(x => x.lang && x.lang.startsWith('en')) || vs[0] || null;
+    ev('speak_pick', {tag, voice: v ? v.name : null, count: vs.length});
+    try { speechSynthesis.cancel(); } catch (e) {}
+    const u = new SpeechSynthesisUtterance(text);
+    if (v) u.voice = v;
+    u.onstart = () => { show('SPEAKING (' + tag + ')'); ev('speak_start', {tag}); };
+    u.onboundary = (e2) => ev('speak_boundary', {tag, char: e2.charIndex});
+    u.onend = () => { show('IDLE'); ev('speak_end', {tag}); };
+    u.onerror = (e2) => ev('speak_error', {tag, error: String(e2.error || 'synth')});
+    ev('speak_call', {tag});
+    speechSynthesis.speak(u);
+  } catch (e) { ev('speak_throw', {tag, error: String(e && e.message || e)}); }
+}
+
+// ---------- variant C: WebAudio tone + generated WAV ----------
+let AC = null;
+function audioCtx() {
+  if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)();
+  return AC;
+}
+function doTone(tag, freq, ms) {
+  gotCmd = true;
+  ev('tone_cmd', {tag, freq, ms});
+  try {
+    const ac = audioCtx();
+    ev('ac_state', {tag, state: ac.state, rate: ac.sampleRate});
+    ac.resume().then(() => ev('ac_resumed', {tag, state: ac.state})).catch(e => ev('ac_resume_err', {tag, error: String(e)}));
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.5, ac.currentTime + 0.03);
+    g.gain.setValueAtTime(0.5, ac.currentTime + ms / 1000 - 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + ms / 1000);
+    o.connect(g); g.connect(ac.destination);
+    ev('tone_start', {tag, freq});
+    o.start();
+    o.stop(ac.currentTime + ms / 1000);
+    o.onended = () => ev('tone_end', {tag, freq});
+  } catch (e) { ev('tone_throw', {tag, error: String(e && e.message || e)}); }
+}
+function makeSweepWav() {
+  // 0.8 s sine sweep 300 -> 900 Hz, 22050 Hz mono 16-bit WAV.
+  const rate = 22050, n = Math.floor(rate * 0.8);
+  const buf = new Int16Array(n);
+  let phase = 0;
+  for (let i = 0; i < n; i++) {
+    const f = 300 + (600 * i / n);
+    phase += 2 * Math.PI * f / rate;
+    buf[i] = Math.round(0.6 * 32767 * Math.sin(phase));
+  }
+  const bytes = new Uint8Array(44 + n * 2);
+  const dv = new DataView(bytes.buffer);
+  const wstr = (off, s) => { for (let i = 0; i < s.length; i++) bytes[off + i] = s.charCodeAt(i); };
+  wstr(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); wstr(8, 'WAVEfmt ');
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, rate, true); dv.setUint32(28, rate * 2, true);
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  wstr(36, 'data'); dv.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) dv.setInt16(44 + i * 2, buf[i], true);
+  return new Blob([bytes], {type: 'audio/wav'});
+}
+function doChirp(tag) {
+  gotCmd = true;
+  ev('chirp_cmd', {tag});
+  try {
+    const a = new Audio(URL.createObjectURL(makeSweepWav()));
+    a.onplay = () => { show('CHIRPING (' + tag + ')'); ev('chirp_start', {tag}); };
+    a.onended = () => { show('IDLE'); ev('chirp_end', {tag}); };
+    a.onerror = () => ev('chirp_error', {tag, error: String(a.error && a.error.message || 'audio')});
+    const p = a.play();
+    ev('chirp_call', {tag});
+    if (p && p.catch) p.catch(e => ev('chirp_play_reject', {tag, error: String(e && e.message || e)}));
+  } catch (e) { ev('chirp_throw', {tag, error: String(e && e.message || e)}); }
+}
+
+// ---------- boot + telemetry ----------
+ev('page_load', {
+  ua: navigator.userAgent,
+  ss: !!window.speechSynthesis,
+  ac: !!(window.AudioContext || window.webkitAudioContext),
+  gpu: !!navigator.gpu,
+  cores: navigator.hardwareConcurrency || null,
+  mem: navigator.deviceMemory || null,
+  href: location.href.split('?')[0],
+});
+enumerate('t0');
+[1000, 3000, 6000, 12000].forEach(ms => setTimeout(() => enumerate('t+' + ms), ms));
+try {
+  if (window.speechSynthesis)
+    speechSynthesis.onvoiceschanged = () => enumerate('changed');
+} catch (e) {}
+show('TEXT-LANE BENCH — page loaded, run ' + RUN);
+
+if (KEY) {
+  try {
+    ably = new Ably.Realtime({key: KEY, clientId: 'bench-page-' + RUN});
+    ably.connection.on('connected', () => ev('ably_connected', {}));
+    ably.connection.on('failed', () => ev('ably_failed', {}));
+    ch = ably.channels.get(CHNAME);
+    ch.subscribe('cmd', (m) => {
+      const d = m.data || {};
+      if (d.cmd === 'ping') ev('pong', {n: d.n});
+      else if (d.cmd === 'speak') doSpeak(d.tag || 'A', d.text || '');
+      else if (d.cmd === 'tone') doTone(d.tag || 'C', d.freq || 880, d.ms || 600);
+      else if (d.cmd === 'chirp') doChirp(d.tag || 'C2');
+      else if (d.cmd === 'mespeak') { if (window.__benchMespeak) window.__benchMespeak(d); else ev('mespeak_unavailable', {tag: d.tag}); }
+      else if (d.cmd === 'piper') { if (window.__benchPiper) window.__benchPiper(d); else ev('piper_unavailable', {tag: d.tag}); }
+      else ev('cmd_unknown', {cmd: String(d.cmd)});
+    });
+  } catch (e) { ev('ably_throw', {error: String(e && e.message || e)}); }
+} else {
+  ev('no_key', {});
+}
+
+// Insurance: if the driver's command path fails but telemetry works,
+// still exercise variants A and C once, 30 s after load.
+setTimeout(() => {
+  if (!gotCmd) {
+    ev('auto_seq', {});
+    doSpeak('A-auto', 'Text lane test. The browser is speaking this sentence by itself.');
+    setTimeout(() => doTone('C-auto', 880, 600), 9000);
+    setTimeout(() => doChirp('C2-auto'), 12000);
+  }
+}, 30000);
+</script>
+<script type="module">
+// ---------- variant B1: Piper in-page model (lazy) ----------
+let piperMod = null, piperBusy = false;
+window.__benchPiper = async (d) => {
+  const tag = d.tag || 'B1';
+  const text = d.text || '';
+  const voice = d.voice || 'en_US-amy-low';
+  if (piperBusy) { ev('piper_busy', {tag}); return; }
+  piperBusy = true;
+  try {
+    if (!piperMod) {
+      ev('piper_import_start', {tag});
+      piperMod = await import('https://esm.sh/@mintplex-labs/piper-tts-web@1.0.5');
+      ev('piper_import_ok', {tag});
+    }
+    ev('piper_predict_start', {tag, voice, cold: !window.__piperWarm});
+    const wav = await piperMod.predict({text, voiceId: voice},
+      (p) => { if (p && p.total) ev('piper_dl', {tag, url: String(p.url || '').split('/').pop(), pct: Math.round(100 * (p.loaded || 0) / p.total)}); });
+    window.__piperWarm = true;
+    ev('piper_predict_done', {tag, bytes: wav && wav.size || 0});
+    const a = new Audio(URL.createObjectURL(wav));
+    a.onplay = () => { show('PIPER SPEAKING (' + tag + ')'); ev('piper_play_start', {tag}); };
+    a.onended = () => { show('IDLE'); ev('piper_play_end', {tag}); };
+    a.onerror = () => ev('piper_play_error', {tag});
+    const pr = a.play();
+    if (pr && pr.catch) pr.catch(e => ev('piper_play_reject', {tag, error: String(e && e.message || e)}));
+  } catch (e) {
+    ev('piper_error', {tag, error: String(e && e.message || e).slice(0, 300)});
+  }
+  piperBusy = false;
+};
+
+// ---------- variant B0: meSpeak formant synth (lazy, floor proof) ----------
+let meSpeakMod = null;
+window.__benchMespeak = async (d) => {
+  const tag = d.tag || 'B0';
+  const text = d.text || '';
+  try {
+    if (!meSpeakMod) {
+      ev('mespeak_import_start', {tag});
+      const m = await import('https://esm.sh/mespeak@2.0.2');
+      meSpeakMod = m.default || m;
+      ev('mespeak_import_ok', {tag});
+      await meSpeakMod.loadConfig('https://cdn.jsdelivr.net/npm/mespeak@2.0.2/src/mespeak_config.json');
+      ev('mespeak_config_ok', {tag});
+      await meSpeakMod.loadVoice('https://cdn.jsdelivr.net/npm/mespeak@2.0.2/voices/en/en-us.json');
+      ev('mespeak_voice_ok', {tag});
+    }
+    ev('mespeak_synth_start', {tag});
+    const dataUrl = meSpeakMod.speak(text, {rawdata: 'data-url'});
+    ev('mespeak_synth_done', {tag, len: String(dataUrl || '').length});
+    const a = new Audio(dataUrl);
+    a.onplay = () => { show('MESPEAK SPEAKING (' + tag + ')'); ev('mespeak_play_start', {tag}); };
+    a.onended = () => { show('IDLE'); ev('mespeak_play_end', {tag}); };
+    const pr = a.play();
+    if (pr && pr.catch) pr.catch(e => ev('mespeak_play_reject', {tag, error: String(e && e.message || e)}));
+  } catch (e) {
+    ev('mespeak_error', {tag, error: String(e && e.message || e).slice(0, 300)});
+  }
+};
+</script>
+</body>
