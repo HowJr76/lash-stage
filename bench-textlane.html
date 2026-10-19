@@ -131,6 +131,10 @@ ev('page_load', {
 });
 enumerate('t0');
 [1000, 3000, 6000, 12000].forEach(ms => setTimeout(() => enumerate('t+' + ms), ms));
+// Heartbeat re-enumeration for the first 3 minutes so a driver that
+// subscribes late still learns the inventory (and proves liveness).
+for (let s = 20; s <= 180; s += 20)
+  setTimeout(() => enumerate('hb+' + s + 's'), s * 1000);
 try {
   if (window.speechSynthesis)
     speechSynthesis.onvoiceschanged = () => enumerate('changed');
@@ -140,7 +144,18 @@ show('TEXT-LANE BENCH — page loaded, run ' + RUN);
 if (KEY) {
   try {
     ably = new Ably.Realtime({key: KEY, clientId: 'bench-page-' + RUN});
-    ably.connection.on('connected', () => ev('ably_connected', {}));
+    ably.connection.on('connected', () => {
+      ev('ably_connected', {});
+      // The boot events fired before the channel existed — republish
+      // the load record and the voice inventory now that they can
+      // actually reach the driver.
+      ev('page_load', {late: true, ua: navigator.userAgent,
+        ss: !!window.speechSynthesis,
+        ac: !!(window.AudioContext || window.webkitAudioContext),
+        gpu: !!navigator.gpu,
+        cores: navigator.hardwareConcurrency || null});
+      enumerate('post-connect');
+    });
     ably.connection.on('failed', () => ev('ably_failed', {}));
     ch = ably.channels.get(CHNAME);
     ch.subscribe('cmd', (m) => {
