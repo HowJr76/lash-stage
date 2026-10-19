@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lash · Moseley Innovations</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
 <script type="importmap">
 {"imports": {
@@ -12,17 +14,44 @@
 }}
 </script>
 <style>
-  html, body { margin:0; height:100%; background:radial-gradient(1200px 700px at 50% -10%, #0d2c47 0%, #081c30 45%, #050f1c 100%); color:#e8eef2;
-    font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
+  /* Stage revamp (2026-10-19, Howard): the full MI look — deep-navy
+     scene, a large rounded-rectangle portrait card. Howard's world (v2,
+     2026-10-19): Lash sits INSIDE a computer, at the helm of a
+     command deck — circuit walls, waveform screens, console glow.
+     Every face loop plays in that one room (deck plate), so a state
+     change never changes the room; the thinking loop adds a thought
+     cloud with cycling dots above his head (thinking state only), name + thinking pill under
+     the card, and a near-opaque lower-third panel carrying status,
+     caption and the heard line behind the product's cyan bracket.
+     Skin only: no element IDs, no JS, no wiring changed. */
+  html, body { margin:0; height:100%; color:#e8eef2;
+    background:
+      linear-gradient(180deg, rgba(5,15,28,.80) 0%, rgba(5,15,28,.88) 55%, rgba(4,12,22,.95) 100%),
+      url('stage-deck-backdrop.jpg') center 30% / cover no-repeat,
+      radial-gradient(1200px 700px at 50% -10%, #0d2c47 0%, #081c30 45%, #050f1c 100%)
+      #050f1c;
+    font-family: "Manrope", -apple-system, "Segoe UI", Roboto, sans-serif; }
   #wrap { height:100%; display:flex; flex-direction:column; align-items:center;
-    justify-content:center; gap:18px; padding:24px; box-sizing:border-box; }
-  #face { width:220px; height:220px; border-radius:50%;
-    background:#fff;
+    justify-content:center; gap:10px; padding:22px; box-sizing:border-box; }
+  #face { width:min(432px, 60vh, 88vw); aspect-ratio:1/1; border-radius:34px;
+    background:#0a2438;
     display:flex; align-items:center; justify-content:center;
-    font-size:110px; border:4px solid #17b6c9; transition: box-shadow .25s;
+    font-size:110px; border:3px solid rgba(103,230,245,.55);
+    box-shadow: 0 24px 60px rgba(0,0,0,.55), 0 0 0 6px rgba(23,182,201,.10),
+      0 0 44px rgba(23,182,201,.14);
+    transition: box-shadow .25s;
     overflow:hidden; }
   #face video { width:100%; height:100%; object-fit:cover; display:block; }
   #face canvas { width:100%; height:100%; display:block; }
+  /* Thinking halo (revamp): while the think pill is up, the portrait
+     card breathes a slow, low teal glow. Pure CSS off the pill's own
+     state (:has) — additive only: if it never fires, the pill still
+     carries the signal exactly as before. */
+  #wrap:has(#think.on) #face { animation: thinkHalo 4.6s ease-in-out infinite;
+    filter: brightness(.965) saturate(1.03); }
+  @keyframes thinkHalo {
+    0%,100% { box-shadow: 0 24px 60px rgba(0,0,0,.55), 0 0 0 6px rgba(25,211,197,.14), 0 0 40px rgba(25,211,197,.16); }
+    50%     { box-shadow: 0 24px 60px rgba(0,0,0,.55), 0 0 0 9px rgba(25,211,197,.26), 0 0 64px rgba(25,211,197,.30); } }
   /* Loops readability (stage v9.2, Fix Round 2): in loops mode the
      four state clips STACK and crossfade (opacity) instead of
      hard-cutting. Gated on the data attribute — set only in loops
@@ -31,7 +60,7 @@
   #face[data-loops="1"] { position:relative; }
   #face[data-loops="1"] video { position:absolute; inset:0; opacity:0;
     transition: opacity .2s ease-in-out; }
-  #face.speaking { box-shadow: 0 0 0 10px rgba(23,182,201,.25), 0 0 60px rgba(23,182,201,.35);
+  #face.speaking { box-shadow: 0 24px 60px rgba(0,0,0,.55), 0 0 0 10px rgba(23,182,201,.28), 0 0 68px rgba(23,182,201,.38);
     animation: talkbob .9s ease-in-out infinite; }
   /* Muted presentation (2026-10-18): while the bridge holds Lash
      muted, the avatar stays on its idle loop, desaturated and
@@ -45,27 +74,71 @@
   #face.muted #mutedBadge { display:block; }
   @keyframes talkbob { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
   #face.listening { box-shadow: 0 0 0 8px rgba(120,255,170,.18); }
-  #name { font-size:28px; font-weight:600; letter-spacing:.02em; }
-  #name .name-brand { color:#17b6c9; }
+  #name { font-size:30px; font-weight:700; letter-spacing:.02em; }
+  #name .name-brand { color:#19d3c5; }
   /* Moseley Innovations brand strip (skin only — no layout/JS changes) */
-  #brand { display:flex; align-items:center; gap:10px; margin-top:4px; opacity:.9; }
-  #brand img { width:30px; height:30px; border-radius:8px; border:1px solid rgba(23,182,201,.5); display:block; }
-  #brand span { font-size:13px; font-weight:700; letter-spacing:.18em; color:#cfe6ee; }
-  #brand em { font-style:normal; font-size:11px; font-weight:600; letter-spacing:.22em; color:#17b6c9; }
-  #status { font-size:15px; color:#9fb2c1; min-height:20px; }
-  #caption { max-width:900px; text-align:center; font-size:20px; line-height:1.45;
-    color:#d7e3ec; min-height:56px; }
-  #heard { max-width:900px; text-align:center; font-size:16px; color:#7f95a7;
+  #brand { display:flex; align-items:center; gap:10px; margin-top:2px; opacity:.85; }
+  #brand img { width:28px; height:28px; border-radius:8px; border:1px solid rgba(23,182,201,.5); display:block; }
+  #brand span { font-size:12px; font-weight:700; letter-spacing:.18em; color:#cfe6ee; }
+  #brand em { font-style:normal; font-size:10.5px; font-weight:600; letter-spacing:.22em; color:#17b6c9; }
+  /* Lower-third panel (revamp): status + caption + heard ride in one
+     near-opaque navy panel — captions must survive Meet compression
+     and a projector, so this is deliberately solid, not glass; the
+     product's cyan bracket is the left edge. */
+  #lowerThird { width:min(940px, 94vw); box-sizing:border-box;
+    background:rgba(7,27,44,.94); border:1px solid rgba(103,230,245,.20);
+    border-left:5px solid #67e6f5; border-radius:16px;
+    padding:13px 24px 15px; margin-top:2px;
+    box-shadow: 0 14px 34px rgba(0,0,0,.38);
+    display:flex; flex-direction:column; align-items:center; gap:5px; }
+  #status { font-size:13.5px; font-weight:600; letter-spacing:.05em;
+    color:#8fb0c4; min-height:18px; text-align:center; }
+  #caption { max-width:900px; text-align:center; font-size:22px; font-weight:600;
+    line-height:1.45; color:#f4f8fb; min-height:56px; }
+  #heard { max-width:900px; text-align:center; font-size:16px; color:#9db8c8;
     min-height:22px; font-style: italic; }
+  /* Live heard line (2026-10-19): while a participant's utterance is
+     still arriving (a draft), the line renders brighter with a live
+     dot, so "words arriving right now" reads differently at a glance
+     from a settled line; a settled line keeps the quiet style above.
+     Kept visually apart from Lash's own #caption (bigger, brighter,
+     non-italic, above this line). */
+  #heard.draft { color:#b9d9e8; opacity:.82; }
+  #heard.draft::after { content:' ●'; font-size:10px; color:#17b6c9;
+    animation: heardPulse 1.1s ease-in-out infinite; }
+  @keyframes heardPulse { 0%,100% { opacity:.25; } 50% { opacity:1; } }
+  /* Thinking indicator (2026-10-19, Howard): the silent gap while
+     Lash composes read as "did he even hear me?" — so the moment a
+     finished message lands, before any thinking starts, this pill
+     goes up under the name strip: three pulsing dots + THINKING,
+     sized to read at meeting-tile scale. It is driven ONLY by the
+     bridge's 'think' signals (see createThinkIndicator + the 'think'
+     subscription): on at final receipt, off at the answer's first
+     playback or at a silent turn close. Space is reserved
+     (min-height + visibility, never display:none) so the layout
+     never jumps when it toggles. */
+  #think { min-height:22px; font-size:15px; color:#17b6c9;
+    visibility:hidden; opacity:0; transition: opacity .18s ease-in-out; }
+  #think.on { visibility:visible; opacity:1; }
+  #think .tdot { display:inline-block; margin:0 1.5px;
+    animation: thinkPulse 1.2s ease-in-out infinite; }
+  #think .tdot.d2 { animation-delay:.2s; }
+  #think .tdot.d3 { animation-delay:.4s; }
+  #think .tword { margin-left:9px; font-size:12px; font-weight:700;
+    letter-spacing:.24em; }
+  @keyframes thinkPulse { 0%,100% { opacity:.18; } 50% { opacity:1; } }
 </style>
 </head>
 <body>
 <div id="wrap">
-  <div id="face"><div id="world3d" style="display:none;width:100%;height:100%"></div><canvas id="puppetCanvas" width="900" height="900" style="display:none"></canvas><video id="faceVideo" src="lash-face.mp4" poster="lash-face.jpg" autoplay muted loop playsinline></video><video id="faceTalk" src="lash-talk.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceWork" src="lash-work.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceMake" src="lash-make.mp4" muted loop playsinline preload="auto" style="display:none"></video><div id="mutedBadge">🔇</div></div>
+  <div id="face"><div id="world3d" style="display:none;width:100%;height:100%"></div><canvas id="puppetCanvas" width="900" height="900" style="display:none"></canvas><video id="faceVideo" src="lash-deck-face.mp4" poster="lash-deck-poster.jpg" autoplay muted loop playsinline></video><video id="faceTalk" src="lash-deck-talk.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceWork" src="lash-think.mp4" muted loop playsinline preload="auto" style="display:none"></video><video id="faceMake" src="lash-deck-make.mp4" muted loop playsinline preload="auto" style="display:none"></video><div id="mutedBadge">🔇</div></div>
   <div id="name">Lash <span class="name-brand">· Moseley Innovations</span></div>
+  <div id="think"><span class="tdot">●</span><span class="tdot d2">●</span><span class="tdot d3">●</span><span class="tword">THINKING</span></div>
+  <div id="lowerThird">
   <div id="status">connecting…</div>
   <div id="caption"></div>
   <div id="heard"></div>
+  </div>
   <div id="brand"><img src="mi-logo.jpg" alt="Moseley Innovations logo"><span>MUSE IN A MEETING</span><em>BY MOSELEY INNOVATIONS</em></div>
 </div>
 <script>
@@ -75,6 +148,7 @@ const face = document.getElementById('face');
 const statusEl = document.getElementById('status');
 const captionEl = document.getElementById('caption');
 const heardEl = document.getElementById('heard');
+const thinkEl = document.getElementById('think');
 
 const queue = [];
 let playing = false;
@@ -267,6 +341,48 @@ if (liveMode && window.Ably) {
       lashTrace('queued', m.data.seq);
       playNext();
     });
+/*THINK-INDICATOR-BEGIN*/
+// Thinking indicator state machine (2026-10-19, Howard): a pure
+// show/hide machine for the #think pill, driven exclusively by the
+// bridge's 'think' signals — the reflex lives in the pipes, never
+// in the brain. Semantics:
+//   show(turn)  a finished message (a transcript FINAL) has been
+//               received and an answer is being prepared. Repeated
+//               shows for the SAME turn are not a change (gate
+//               merges re-fire the signal); a show for a NEW turn
+//               while visible IS a change (the indicator now speaks
+//               for the newer thought) and stays up.
+//   hide()      the answer's first line started playing (the
+//               speaking state takes over), or the turn closed
+//               with nothing spoken, or the thought was flushed /
+//               the call ended / a failsafe fired. The indicator
+//               must never claim an answer is coming when none is.
+//   Nothing shows the indicator except a show(): no final, no pill.
+function createThinkIndicator() {
+  let visible = false, turn = null, shows = 0;
+  function view() {
+    return visible ? {visible: true, turn: turn}
+                   : {visible: false, turn: null};
+  }
+  return {
+    show(t) {
+      if (visible && turn === t)
+        return {changed: false, view: view(), closed: null};
+      visible = true; turn = (t == null ? null : t); shows++;
+      return {changed: true, view: view(), closed: null};
+    },
+    hide() {
+      if (!visible)
+        return {changed: false, view: view(), closed: null};
+      const closed = turn;
+      visible = false; turn = null;
+      return {changed: true, view: view(), closed: closed};
+    },
+    view: view,
+    shows: function () { return shows; },
+  };
+}
+/*THINK-INDICATOR-END*/
     // Face-state signals from the bridge (stage v9): 'thinking' is
     // published the moment an utterance reaches the bridge and the
     // brain starts composing; 'done' when the turn's lines have all
@@ -299,6 +415,69 @@ if (liveMode && window.Ably) {
       } else if (m.data.state === 'unmuted') {
         faceMuted = false;
         faceRefresh();
+      }
+    });
+    // Thinking indicator signals from the bridge (2026-10-19,
+    // Howard): 'on' fires the instant a transcript FINAL lands at
+    // the bridge — before the gate settle, before the brain is even
+    // dispatched — so the room can see "he got it, an answer is
+    // coming" for the whole compose gap. 'off' fires when the
+    // answer's first line actually starts playing (reason
+    // 'playback'), or when the turn closed with nothing spoken
+    // ('silent'), was flushed by a barge-in ('flush'), or the call
+    // ended ('leave') — the pill must never promise an answer that
+    // is not coming. The bridge is the single authority for both
+    // transitions; this handler only renders + acks.
+    const thinkInd = createThinkIndicator();
+    let thinkAckCount = 0;
+    function thinkApply(res, reason) {
+      if (!res || !res.changed) return;
+      const v = res.view;
+      try { thinkEl.classList.toggle('on', v.visible); } catch (e) {}
+      if (v.visible) {
+        // The face takes its thinking state on the same signal:
+        // the bridge's own 'face' thinking publish only fires when
+        // a fresh bridge turn opens, so a final that lands
+        // mid-pileup would otherwise leave the face behind the
+        // pill. (faceResolve still lets real playback outrank it.)
+        faceThinking = true;
+        clearTimeout(thinkFailsafe);
+        // Failsafe only — if every clear path dies with a stuck
+        // compose, the pill and the work loop must not stare
+        // forever. Normal clears always arrive via 'off'.
+        thinkFailsafe = setTimeout(() => {
+          faceThinking = false; faceRefresh();
+          thinkApply(thinkInd.hide(), 'failsafe');
+        }, 30000);
+        faceRefresh();
+      } else if (reason === 'silent' || reason === 'flush'
+                 || reason === 'leave' || reason === 'failsafe') {
+        // That thought is dead: no answer is coming, so the face
+        // leaves its thinking state too (a shipped turn's own
+        // 'face' done may also land — both paths agree).
+        faceThinking = false;
+        clearTimeout(thinkFailsafe);
+        faceRefresh();
+      }
+      // Measurement ack (the heard_render pattern): the bridge
+      // pairs this stage-wall stamp with the final-receipt stamp,
+      // so a run bundle can state final -> indicator-visible.
+      if (thinkAckCount < 400 && upCh) {
+        thinkAckCount++;
+        try {
+          upCh.publish('control', {type: 'think_render',
+            state: v.visible ? 'on' : 'off',
+            turn: v.visible ? v.turn : res.closed,
+            reason: reason || null, wall: Date.now()});
+        } catch (e) { /* telemetry is best-effort */ }
+      }
+    }
+    downCh.subscribe('think', (m) => {
+      if (!m.data) return;
+      if (m.data.state === 'on') {
+        thinkApply(thinkInd.show(m.data.turn), 'on');
+      } else if (m.data.state === 'off') {
+        thinkApply(thinkInd.hide(), m.data.reason || 'off');
       }
     });
   } catch (e) { setStatus('live wire error'); }
@@ -1301,6 +1480,57 @@ function createPartialTracker(opts) {
 }
 /*PARTIAL-TRACKER-END*/
 
+/*HEARD-RENDER-BEGIN*/
+// Live heard line (Howard, 2026-10-18/19): the words of whoever is
+// speaking appear on the display AS THEY ARRIVE — the same courtesy
+// Lash's own caption line gets — at whatever granularity the
+// transcript stream truly offers. Pure state machine (no DOM): the
+// transcript handler feeds it every event; it decides what the heard
+// line shows and whether the render actually changed (telemetry is
+// emitted only on change). Rules, mirroring the caption rules:
+//   * a draft (non-final) renders the instant it lands, replacing the
+//     previous draft snapshot wholesale — the stream's drafts are
+//     cumulative snapshots of one utterance, ASR revisions included,
+//     so there is nothing to batch or hold back;
+//   * a final SETTLES the line: the settled text stands until the
+//     next utterance's first event replaces it — words stay until
+//     the phrase completes, exactly like a played-out caption line;
+//   * one line, one speaker at a time: the latest event owns the
+//     display; drafts are kept per speaker, so an interleaved final
+//     from another speaker never erases a draft it does not own.
+function createHeardDisplay() {
+  const drafts = new Map();   // speakerKey -> {speaker, text}
+  let showing = null;         // {speakerKey, speaker, text, draft}
+  function snapshot() {
+    return showing ? {speaker: showing.speaker, text: showing.text,
+                      draft: !!showing.draft} : null;
+  }
+  function same(a, b) {
+    if (!a || !b) return a === b;
+    return a.speaker === b.speaker && a.text === b.text
+        && !!a.draft === !!b.draft;
+  }
+  return {
+    draft(key, speaker, text) {
+      if (!text) return {changed: false, view: snapshot()};
+      drafts.set(key, {speaker, text});
+      const next = {speakerKey: key, speaker, text, draft: true};
+      const changed = !same(showing, next);
+      showing = next;
+      return {changed, view: snapshot()};
+    },
+    settle(key, speaker, text) {
+      drafts.delete(key);
+      const next = {speakerKey: key, speaker, text, draft: false};
+      const changed = !same(showing, next);
+      showing = next;
+      return {changed, view: snapshot()};
+    },
+    view() { return snapshot(); },
+  };
+}
+/*HEARD-RENDER-END*/
+
 let lastBargeAt = 0;
 try {
   const rt = new WebSocket('wss://meeting-data.bot.recall.ai/api/v1/transcript');
@@ -1360,13 +1590,110 @@ try {
     }
   }, 250);
 
+  // ---- Full-session stream census + live heard rendering ----
+  // (2026-10-19, LIVE-DISPLAY bench): the schema probes above answer
+  // "did a non-final EVER arrive" once per session. Howard's display
+  // requirement needs the whole truth: EVERY message counted by
+  // shape, drafts-per-utterance from original_transcript_id, and a
+  // render event for every change of the heard line. Reported as
+  // transcript_census control notes (first final, every 25 s, socket
+  // close) and heard_render notes (on change, capped). All of it is
+  // best-effort: a census failure must never touch the stream.
+  const heardDisplay = createHeardDisplay();
+  let heardRenderCount = 0;
+  const census = {
+    msgs: 0, finals: 0, nonfinals: 0, empty: 0, unparsed: 0,
+    firstWall: 0, sigs: new Map(), utts: new Map(),
+  };
+  function censusShape(m, tr, words) {
+    const sig = 'top[' + Object.keys(m || {}).sort().join(',')
+      + '] tr[' + Object.keys(tr || {}).sort().join(',')
+      + '] fin=' + (tr && ('is_final' in tr) ? String(tr.is_final) : 'absent')
+      + ' src=' + (tr && tr.source != null ? String(tr.source) : 'absent')
+      + ' wts=' + (words && words[0] && ('start_time_abs' in words[0])
+                   ? 'abs' : 'rel/none');
+    let rec = census.sigs.get(sig);
+    if (!rec) {
+      if (census.sigs.size >= 16) return;
+      rec = {n: 0, word_keys: Object.keys((words && words[0]) || {})};
+      census.sigs.set(sig, rec);
+    }
+    rec.n++;
+  }
+  function censusUtt(id, isFinal, wall, words, speaker) {
+    if (!id) return;
+    let u = census.utts.get(id);
+    if (!u) {
+      if (census.utts.size >= 300) return;
+      const w0 = (words && words[0]) || {};
+      u = {drafts: 0, firstWall: wall, firstIsFinal: isFinal,
+           firstWordStartAbs: (w0.start_time_abs != null
+             ? w0.start_time_abs : (w0.start_time != null
+               ? w0.start_time : null)),
+           speaker, closed: false};
+      census.utts.set(id, u);
+    }
+    if (isFinal) u.closed = true; else u.drafts++;
+  }
+  function censusSummary() {
+    let withDrafts = 0, draftTotal = 0, draftMax = 0, closed = 0;
+    const dist = {};
+    for (const u of census.utts.values()) {
+      if (u.drafts > 0) withDrafts++;
+      if (u.closed) closed++;
+      draftTotal += u.drafts;
+      if (u.drafts > draftMax) draftMax = u.drafts;
+      const k = String(Math.min(u.drafts, 10));
+      dist[k] = (dist[k] || 0) + 1;
+    }
+    const sigs = [];
+    for (const [sig, rec] of census.sigs) sigs.push({sig, n: rec.n,
+                                                    word_keys: rec.word_keys});
+    return {msgs: census.msgs, finals: census.finals,
+            nonfinals: census.nonfinals, empty: census.empty,
+            unparsed: census.unparsed, shapes: sigs,
+            utterances_tracked: census.utts.size,
+            utterances_closed: closed,
+            utterances_with_drafts: withDrafts,
+            drafts_total: draftTotal, drafts_max: draftMax,
+            drafts_dist: dist,
+            heard_renders: heardRenderCount};
+  }
+  function sendCensus(note) {
+    try {
+      sendControl(Object.assign({type: 'transcript_census',
+                                 ts: Date.now(), note},
+                                censusSummary()));
+    } catch (e) { /* census is best-effort */ }
+  }
+  setInterval(() => { if (census.msgs) sendCensus('interval'); }, 25000);
+  function renderHeard(res, kind, wall) {
+    if (!res || !res.changed || !res.view) return;
+    try {
+      heardEl.textContent = res.view.speaker + ': ' + res.view.text;
+      heardEl.classList.toggle('draft', !!res.view.draft);
+    } catch (e) { return; }
+    heardRenderCount++;
+    if (heardRenderCount <= 400) {
+      try {
+        sendControl({type: 'heard_render', ts: wall, kind,
+                     speaker: res.view.speaker,
+                     words: captionWords(res.view.text).length,
+                     chars: res.view.text.length});
+      } catch (e) { /* telemetry is best-effort */ }
+    }
+  }
+
   rt.onmessage = (ev) => {
-    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    let m; try { m = JSON.parse(ev.data); } catch { census.unparsed++; return; }
     const recvWall = Date.now();
+    if (!census.firstWall) census.firstWall = recvWall;
+    census.msgs++;
     const tr = m.transcript || m.data?.transcript || {};
     const words = tr.words || [];
+    try { censusShape(m, tr, words); } catch (e) { /* best-effort */ }
     const text = words.map(w => w.text).join(' ').trim();
-    if (!text) return;
+    if (!text) { census.empty++; return; }
     const speaker = extractSpeaker(m);
     const key = speakerKeyOf(m, speaker);
     if (!schemaProbed) {
@@ -1397,9 +1724,27 @@ try {
       }
     }
     const isFinal = tr.is_final !== false;
+    // Census by utterance (drafts-per-utterance is the granularity
+    // evidence for the live-display requirement).
+    if (isFinal) {
+      census.finals++;
+      if (!census.firstFinalSent) {
+        census.firstFinalSent = true;
+        setTimeout(() => sendCensus('first final'), 1500);
+      }
+    } else census.nonfinals++;
+    try {
+      censusUtt(tr.original_transcript_id || null, isFinal,
+                recvWall, words, speaker);
+    } catch (e) { /* best-effort */ }
     if (!isFinal) {
       streamCounts.nonfinals++;
       if (streamCounts.nonfinals === 1) sendSchema2('first nonfinal seen');
+      // LIVE HEARD LINE: the draft renders the instant it lands —
+      // no stability wait, no batching (that wait is only for the
+      // precompose forward below, a different consumer).
+      renderHeard(heardDisplay.draft(key, speaker, text),
+                  'draft', recvWall);
       let trk = partialTrackers.get(key);
       if (!trk) {
         trk = createPartialTracker();
@@ -1412,15 +1757,94 @@ try {
       return;
     }
     streamCounts.finals++;
+    // LIVE HEARD LINE: the final settles the line even when the
+    // send-up below dedupes it (the same words spoken twice still
+    // complete THIS utterance on the display).
+    renderHeard(heardDisplay.settle(key, speaker, text),
+                'final', recvWall);
     const trk = partialTrackers.get(key);
     if (trk) trk.reset();
     if (text !== lastSentByKey.get(key)) {
       lastSentByKey.set(key, text);
       greetingUntil = 0;   // a real utterance ends any greeting window
-      heardEl.textContent = speaker + ': ' + text;
       sendUp('final', speaker, text, recvWall);
     }
   };
+  rt.onclose = () => sendCensus('socket close');
+
+  // BENCH PROBES (?bench=1 only — never in a production summon):
+  // does the in-page data service offer any stream besides the
+  // transcript socket — in particular participant events carrying
+  // speech_on / speech_off? Each candidate path is tried once and
+  // its fate reported as stream_probe control notes; any message
+  // that does arrive gets its shape censused like the transcript
+  // stream's, and any speech_on/speech_off-looking type is flagged.
+  if (qs.get('bench') === '1') {
+    const probePaths = ['participant_events', 'participants',
+                        'chat', 'events'];
+    for (const p of probePaths) {
+      try {
+        const rec = {msgs: 0, types: {}, shapes: {}};
+        const pws = new WebSocket(
+          'wss://meeting-data.bot.recall.ai/api/v1/' + p);
+        pws.onopen = () => {
+          try {
+            sendControl({type: 'stream_probe', ts: Date.now(),
+                         path: p, event: 'open'});
+          } catch (e) {}
+        };
+        pws.onmessage = (ev) => {
+          rec.msgs++;
+          let pm = null;
+          try { pm = JSON.parse(ev.data); } catch (e) {}
+          if (pm) {
+            const t = pm.type || pm.event
+              || (pm.data && (pm.data.type || pm.data.event)) || '';
+            if (t) {
+              rec.types[String(t)] = (rec.types[String(t)] || 0) + 1;
+              if (/speech_(on|off)/.test(String(t))) {
+                try {
+                  sendControl({type: 'stream_probe', ts: Date.now(),
+                               path: p, event: 'speech_signal',
+                               sig_type: String(t),
+                               keys: Object.keys(pm || {})});
+                } catch (e) {}
+              }
+            }
+            const sig = Object.keys(pm || {}).sort().join(',');
+            rec.shapes[sig] = (rec.shapes[sig] || 0) + 1;
+          }
+          if (rec.msgs === 1 || rec.msgs === 20) {
+            try {
+              sendControl({type: 'stream_probe', ts: Date.now(),
+                           path: p, event: 'messages', msgs: rec.msgs,
+                           types: rec.types, shapes: rec.shapes});
+            } catch (e) {}
+          }
+        };
+        pws.onerror = () => {
+          try {
+            sendControl({type: 'stream_probe', ts: Date.now(),
+                         path: p, event: 'error'});
+          } catch (e) {}
+        };
+        pws.onclose = (ev) => {
+          try {
+            sendControl({type: 'stream_probe', ts: Date.now(),
+                         path: p, event: 'close', code: ev.code,
+                         msgs: rec.msgs, types: rec.types,
+                         shapes: rec.shapes});
+          } catch (e) {}
+        };
+      } catch (e) {
+        try {
+          sendControl({type: 'stream_probe', ts: Date.now(),
+                       path: p, event: 'construct_failed',
+                       err: String(e && e.message || e)});
+        } catch (e2) {}
+      }
+    }
+  }
 } catch (e) { /* not inside a Recall bot — local tests drive the WS mode */ }
 
 // ---- GitHub mailbox ----
