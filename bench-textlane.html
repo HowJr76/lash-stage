@@ -196,12 +196,21 @@ window.__benchPiper = async (d) => {
   try {
     if (!piperMod) {
       ev('piper_import_start', {tag});
-      piperMod = await import('https://esm.sh/@mintplex-labs/piper-tts-web@1.0.5');
+      // v3 fix: pin the peer onnxruntime-web to 1.22.0 — the lib's
+      // baked-in ONNX base (cdnjs ort 1.18.0) 404s the backend loader
+      // ort-wasm-simd-threaded.mjs (proven in the local control run).
+      piperMod = await import('https://esm.sh/@mintplex-labs/piper-tts-web@1.0.5?deps=onnxruntime-web@1.22.0');
       ev('piper_import_ok', {tag});
     }
     ev('piper_predict_start', {tag, voice, cold: !window.__piperWarm});
-    const wav = await piperMod.predict({text, voiceId: voice},
-      (p) => { if (p && p.total) ev('piper_dl', {tag, url: String(p.url || '').split('/').pop(), pct: Math.round(100 * (p.loaded || 0) / p.total)}); });
+    if (!window.__piperSession) {
+      window.__piperSession = await piperMod.TtsSession.create({ voiceId: voice,
+        wasmPaths: { onnxWasm: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/',
+                     piperData: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.data',
+                     piperWasm: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm' },
+        progress: (p) => { if (p && p.total) ev('piper_dl', {tag, url: String(p.url || '').split('/').pop(), pct: Math.round(100 * (p.loaded || 0) / p.total)}); } });
+    }
+    const wav = await window.__piperSession.predict(text);
     window.__piperWarm = true;
     ev('piper_predict_done', {tag, bytes: wav && wav.size || 0});
     const a = new Audio(URL.createObjectURL(wav));
@@ -233,7 +242,7 @@ window.__benchMespeak = async (d) => {
       ev('mespeak_voice_ok', {tag});
     }
     ev('mespeak_synth_start', {tag});
-    const dataUrl = meSpeakMod.speak(text, {rawdata: 'data-url'});
+    const dataUrl = meSpeakMod.speak(text, {voice: 'en-us', rawdata: 'data-url'});
     ev('mespeak_synth_done', {tag, len: String(dataUrl || '').length});
     const a = new Audio(dataUrl);
     a.onplay = () => { show('MESPEAK SPEAKING (' + tag + ')'); ev('mespeak_play_start', {tag}); };
