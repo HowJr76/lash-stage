@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LASH — Stream Test v7</title>
+<!-- v7 stream test (phone-first redesign, 2026-10-20): same wire as v4 — Lash's
+     words appear AS COMPOSED, each clause renders the instant it arrives; the
+     reply label carries the original line's wall-clock time and the lateness to
+     first words; a CUTOFF at the exact point reached means only words already
+     shown exist. What changed is ONLY the presentation: the tile is designed
+     for a phone in portrait Meet, where the 1280x720 canvas lands as a thin
+     band — the live answer is the hero in very large type, the in-reply-to
+     label and cutoff state are legible at that size, and the script strip is
+     demoted to a diagnostics whisper (last 2 resolved lines, dimmed).
+     Wire contract identical to v4: channel script-test; hello page tag
+     stream-test-v7; events hello/partial/final/scriptline/dispatch/
+     render_start/clause_shown/rendered/cutoff out, clause/turn_end in.
+     Caption rule honored: only text actually shown is ever on screen/recorded. -->
+<style>
+  html,body{margin:0;height:100%;background:radial-gradient(1200px 700px at 50% -10%, #0d2c47 0%, #081c30 45%, #050f1c 100%);color:#e8eef2;font-family:Georgia,'Times New Roman',serif;overflow:hidden}
+  /* safe area: all critical content lives in the center ~88% of the canvas —
+     Meet crops tile edges in some layouts; top/bottom 6% stays expendable */
+  #wrap{height:100%;display:flex;flex-direction:column;align-items:center;padding:38px 78px 34px;box-sizing:border-box}
+  #head{width:100%;max-width:1120px;display:flex;justify-content:space-between;align-items:baseline;gap:24px;border-bottom:3px solid #17b6c9;padding-bottom:10px}
+  #title{font-size:27px;font-weight:700;letter-spacing:.05em;white-space:nowrap}
+  #title em{font-style:normal;color:#17b6c9}
+  #status{font-size:21px;font-weight:600;color:#b8c9d8;text-align:right;line-height:1.3}
+  #status.cut{color:#f5c15c;font-weight:700}
+  #live{width:100%;max-width:1120px;min-height:38px;padding:14px 0 2px;font-size:25px;line-height:1.4}
+  #live .who{color:#f5c15c;font-weight:bold;font-size:21px;letter-spacing:.08em}
+  .committed{color:#ffffff;font-weight:bold}
+  .tentative{color:#7d93ad;font-style:italic}
+  /* the hero: the live answer. Breathing room left and right — a future
+     avatar/face element takes a side seat without wall-to-wall text */
+  #response{width:100%;max-width:1060px;flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:6px 0}
+  #prompt{font-size:22px;color:#a9bfd2;font-style:italic;line-height:1.4;min-height:31px;max-width:1020px;margin-bottom:10px}
+  #say{font-size:58px;line-height:1.45;color:#eafafd;max-width:1040px;overflow:hidden}
+  #say .who{color:#17b6c9;font-weight:bold}
+  #say .cutmark{color:#f5c15c;font-size:42px;font-weight:bold}
+  /* diagnostics whisper: resolved history, dimmed, last couple of lines only */
+  #logwrap{width:100%;max-width:1120px;border-top:2px solid rgba(23,182,201,.35);padding-top:8px;opacity:.62}
+  #logtitle{font-size:13px;letter-spacing:.22em;color:#17b6c9;font-weight:700;margin-bottom:4px}
+  #script{font-size:19px;line-height:1.45}
+  #script .line{margin:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #script .ts{color:#f5c15c;font-weight:bold;font-size:16px}
+  #script .who{color:#f5c15c;font-weight:bold}
+  #script .who.lash{color:#17b6c9}
+  #counters{font-size:14px;color:#5f7d94;margin-top:4px}
+  /* small or short viewports (direct viewing, odd tiles): scale the hero
+     down with the viewport rather than clipping */
+  @media (max-height:540px){
+    #wrap{padding:20px 40px}
+    #response{justify-content:flex-start}
+    #say{font-size:40px;flex:none}
+    #prompt{font-size:18px;min-height:26px}
+    #live{display:none}
+    #logwrap{display:none}
+    #title{font-size:22px}
+    #status{font-size:17px}
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="head">
+    <div id="title">LASH <em>· STREAM TEST v7</em></div>
+    <div id="status">connecting…</div>
+  </div>
+  <div id="live"><span class="who">NOW&nbsp;&nbsp;</span><span class="committed"></span><span class="tentative"></span></div>
+  <div id="response">
+    <div id="prompt"></div>
+    <div id="say"></div>
+  </div>
+  <div id="logwrap">
+    <div id="logtitle">SCRIPT — RESOLVED HISTORY ONLY</div>
+    <div id="script"></div>
+    <div id="counters">partials: 0 · finals: 0 · sent: 0 · skipped re-arrivals: 0</div>
+  </div>
+</div>
+
+<script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
+<script>
+const qs = new URLSearchParams(location.search);
+const ABLY_KEY = qs.get('live') || '';
+let ablyCh = null;
+if (ABLY_KEY && window.Ably) {
+  try { ablyCh = new Ably.Realtime(ABLY_KEY).channels.get('script-test'); } catch(e) {}
+}
+function forward(kind, payload) { if (ablyCh) { try { ablyCh.publish(kind, payload); } catch(e) {} } }
+
+const statusEl = document.getElementById('status');
+const countersEl = document.getElementById('counters');
+const liveWho = document.querySelector('#live .who');
+const liveCommitted = document.querySelector('#live .committed');
+const liveTentative = document.querySelector('#live .tentative');
+const promptEl = document.getElementById('prompt');
+const sayEl = document.getElementById('say');
+const scriptEl = document.getElementById('script');
+
+const wStart = w => (w && (w.start_time ?? (w.start_timestamp && w.start_timestamp.relative))) || 0;
+const wEnd = w => (w && (w.end_time ?? (w.end_timestamp && w.end_timestamp.relative))) || 0;
+function keyFor(speaker, words) { return speaker + '@' + (words && words.length ? wStart(words[0]).toFixed(1) : '0.0'); }
+function lcp(a, b) { let i = 0; while (i < a.length && i < b.length && a[i].text === b[i].text && Math.abs(wStart(a[i]) - wStart(b[i])) < 0.05) i++; return i; }
+const fmt = t => t == null ? '--.--' : t.toFixed(2) + 's';
+const fmtClock = wall => { const d = new Date(wall); return d.toTimeString().slice(0, 8); };
+
+let partials = 0, finals = 0, submitted = 0, skippedTotal = 0, seq = 0;
+let clausesSeen = 0, cutoffs = 0;
+const builders = new Map();
+function renderCounters() { countersEl.textContent = `partials: ${partials} · finals: ${finals} · sent: ${submitted} · skipped re-arrivals: ${skippedTotal} · clauses: ${clausesSeen} · cutoffs: ${cutoffs}`; }
+function renderLive(speaker, committed, tentative) {
+  liveWho.textContent = speaker ? speaker.toUpperCase() + '  ' : 'NOW  ';
+  liveCommitted.textContent = committed.map(w => w.text).join(' ');
+  liveTentative.textContent = (committed.length ? ' ' : '') + tentative.map(w => w.text).join(' ');
+}
+function pushScriptLine(tsText, speaker, text, isLash) {
+  const div = document.createElement('div'); div.className = 'line';
+  const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = tsText + ' ';
+  const who = document.createElement('span'); who.className = 'who' + (isLash ? ' lash' : ''); who.textContent = (speaker || '').toUpperCase() + ': ';
+  div.appendChild(ts); div.appendChild(who); div.appendChild(document.createTextNode(text));
+  scriptEl.appendChild(div);
+  while (scriptEl.children.length > 2) scriptEl.removeChild(scriptEl.firstChild);
+}
+function appendScript(speaker, words, isLash) {
+  const t0 = words.length ? wStart(words[0]) : null, t1 = words.length ? wEnd(words[words.length-1]) : null;
+  const text = words.map(w => w.text).join(' ');
+  pushScriptLine(`[${fmt(t0)} → ${fmt(t1)}]`, speaker, text, isLash);
+  return {t0, t1, text};
+}
+
+// ---- v4 streaming response: clauses render ON ARRIVAL (as composed) ----
+let cur = null; // {turn, shown:[], started_wall, active, cut}
+// presentation-only: typical answers render at full hero size; a very long
+// answer steps the type down just enough to stay fully on the tile
+const SAY_SIZES = [58, 50, 44, 38, 33, 28, 24];
+function fitSay() {
+  // measure against the space actually available: #say's parent area minus
+  // the prompt label and margins (sayEl.clientHeight alone is circular when
+  // #say is the tallest child — it grows with its own content)
+  const avail = sayEl.parentElement.clientHeight - promptEl.offsetHeight - 26;
+  let i = 0;
+  sayEl.style.fontSize = SAY_SIZES[0] + 'px';
+  while (i < SAY_SIZES.length - 1 && avail > 0 && sayEl.scrollHeight > avail) {
+    i++; sayEl.style.fontSize = SAY_SIZES[i] + 'px';
+  }
+}
+function startTurn(msg) {
+  cur = { turn: msg.turn, shown: [], started_wall: Date.now(), active: true, cut: false };
+  statusEl.classList.remove('cut');
+  sayEl.style.fontSize = SAY_SIZES[0] + 'px';
+  sayEl.innerHTML = '<span class="who">LASH&nbsp;&nbsp;</span>';
+  const late = msg.said_wall ? ((cur.started_wall - msg.said_wall) / 1000).toFixed(1) : '?';
+  promptEl.textContent = 'in reply to: "' + (msg.said_text || '') + '"' +
+    (msg.said_wall ? (' · said ' + fmtClock(msg.said_wall) + ' · +' + late + 's to first words') : '');
+  forward('render_start', { turn: msg.turn, in_reply_to: msg.turn, wall: cur.started_wall });
+}
+function finalizeTurn(note) {
+  if (!cur) return;
+  const text = cur.shown.join(' ');
+  pushScriptLine('[' + fmtClock(cur.started_wall) + ']', 'Lash', text + (note ? ' ' + note : ''), true);
+  forward('rendered', { turn: cur.turn, in_reply_to: cur.turn, words: cur.shown.length,
+                        started_wall: cur.started_wall, ended_wall: Date.now(), note: note || '' });
+  cur.active = false;
+}
+function onClause(msg) {
+  if (cur && cur.cut && cur.turn === msg.turn) return; // cut off: remainder never renders
+  if (!cur || cur.turn !== msg.turn || !cur.active) {
+    if (cur && cur.active) finalizeTurn('(superseded)');
+    startTurn(msg);
+  }
+  const words = String(msg.text || '').split(/\s+/).filter(Boolean);
+  clausesSeen++; renderCounters();
+  for (const w of words) { sayEl.appendChild(document.createTextNode(' ' + w)); cur.shown.push(w); }
+  fitSay();
+  forward('clause_shown', { turn: msg.turn, idx: msg.idx, words_total: cur.shown.length, wall: Date.now() });
+}
+function onTurnEnd(msg) {
+  if (cur && cur.turn === msg.turn && cur.active) finalizeTurn('');
+}
+function fireCutoff() {
+  if (!cur || !cur.active || cur.cut) return;
+  cur.cut = true; cutoffs++; renderCounters();
+  sayEl.appendChild(Object.assign(document.createElement('span'), { className: 'cutmark', textContent: ' —✂' }));
+  forward('cutoff', { turn: cur.turn, words_shown: cur.shown.length, wall: Date.now() });
+  finalizeTurn('— cut off at word ' + cur.shown.length);
+  statusEl.textContent = 'cut off at word ' + cur.shown.length + ' — the rest never existed';
+  statusEl.classList.add('cut');
+}
+if (ablyCh) {
+  ablyCh.subscribe('clause', m => { try { onClause(typeof m.data === 'string' ? JSON.parse(m.data) : m.data); } catch(e) {} });
+  ablyCh.subscribe('turn_end', m => { try { onTurnEnd(typeof m.data === 'string' ? JSON.parse(m.data) : m.data); } catch(e) {} });
+}
+
+// ---- transcript intake (same proven path as v2/v3) ----
+try {
+  const rt = new WebSocket('wss://meeting-data.bot.recall.ai/api/v1/transcript');
+  rt.onopen = () => { statusEl.textContent = 'listening — v7: my words appear as I write them; speak over me to cut me off'; forward('hello', {ts: Date.now(), page: 'stream-test-v7'}); };
+  rt.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    const tr = m.transcript || (m.data && m.data.transcript) || {};
+    const words = tr.words || [];
+    if (!words.length) return;
+    const speaker = (tr.participant && tr.participant.name) || (m.participant && m.participant.name) || (m.data && m.data.participant && m.data.participant.name) || 'Unknown';
+    const isFinal = tr.is_final !== false;
+    const uttId = keyFor(speaker, words);
+    // CUTOFF: first partial of a NEW human utterance while a reply is streaming
+    if (!isFinal && !builders.has(uttId)) fireCutoff();
+    forward(isFinal ? 'final' : 'partial', {speaker, isFinal, uttId, words, recv: Date.now()});
+    let b = builders.get(uttId);
+    if (!b) { b = {prev: null, committed: [], done: false}; builders.set(uttId, b); }
+    if (b.done) return;
+    if (!isFinal) partials++; else finals++;
+    if (b.prev) {
+      const agree = lcp(b.prev, words);
+      skippedTotal += agree;
+      if (agree > b.committed.length) b.committed = words.slice(0, agree);
+    }
+    b.prev = words;
+    if (isFinal) {
+      b.done = true; submitted++; seq++;
+      const line = appendScript(speaker, words, false);
+      forward('scriptline', {speaker, words, ...line, recv: Date.now()});
+      forward('dispatch', {seq, speaker, text: line.text, t0: line.t0, t1: line.t1, wall: Date.now()});
+      renderLive('', [], []);
+    } else {
+      renderLive(speaker, b.committed, words.slice(b.committed.length));
+    }
+    renderCounters();
+  };
+  rt.onerror = () => { statusEl.textContent = 'transcript stream error (am I inside the Recall bot?)'; };
+} catch(e) { statusEl.textContent = 'not inside a Recall bot — local preview only'; }
+</script>
+</body>
+</html>
