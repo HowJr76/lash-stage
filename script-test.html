@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SCRIPT — Live Test</title>
+<style>
+  html,body{margin:0;height:100%;background:#0a1628;color:#eaf4ff;font-family:Arial,Helvetica,sans-serif;overflow:hidden}
+  #head{padding:18px 26px 8px;border-bottom:4px solid #14b8a6}
+  #title{font-size:40px;font-weight:bold;letter-spacing:1px}
+  #status{font-size:22px;color:#8fb4d8;margin-top:4px}
+  #counters{font-size:22px;color:#5eead4;margin-top:2px}
+  #live{padding:16px 26px;font-size:30px;line-height:1.35;min-height:86px}
+  #live .who{color:#5eead4;font-weight:bold}
+  .committed{color:#ffffff;font-weight:bold}
+  .tentative{color:#7d93ad;font-style:italic}
+  #script{padding:6px 26px;font-size:27px;line-height:1.45}
+  #script .line{margin:10px 0}
+  #script .ts{color:#f5c15c;font-weight:bold}
+  #script .who{color:#5eead4;font-weight:bold}
+</style>
+</head>
+<body>
+<div id="head">
+  <div id="title">SCRIPT — LIVE TEST</div>
+  <div id="status">connecting to transcript stream…</div>
+  <div id="counters">partials: 0 · finals: 0 · submitted once: 0 · re-arrived words skipped: 0</div>
+</div>
+<div id="live"><span class="who">LIVE&nbsp;&nbsp;</span><span class="committed"></span><span class="tentative"></span></div>
+<div id="script"></div>
+
+<script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
+<script>
+// ---- Script Test page (standalone, new file; production stage.html untouched) ----
+// Consumes Recall's in-bot transcript WebSocket exactly as the production stage does,
+// but PRESERVES words[] (text + start/end timestamps), runs the Sentence Builder
+// in-page (LocalAgreement: a word commits only when two consecutive versions agree
+// on it at the same timestamp), and forwards every raw message to Ably channel
+// "script-test" so the VM watcher can run the same builder server-side.
+const qs = new URLSearchParams(location.search);
+const ABLY_KEY = qs.get('live') || '';
+let ablyCh = null;
+if (ABLY_KEY && window.Ably) {
+  try {
+    const ab = new Ably.Realtime(ABLY_KEY);
+    ablyCh = ab.channels.get('script-test');
+    ablyCh.publish('hello', {ts: Date.now(), page: 'script-test'});
+  } catch(e) {}
+}
+function forward(kind, payload) {
+  if (ablyCh) { try { ablyCh.publish(kind, payload); } catch(e) {} }
+}
+
+const statusEl = document.getElementById('status');
+const countersEl = document.getElementById('counters');
+const liveEl = document.getElementById('live');
+const liveCommitted = liveEl.querySelector('.committed');
+const liveTentative = liveEl.querySelector('.tentative');
+const liveWho = liveEl.querySelector('.who');
+const scriptEl = document.getElementById('script');
+
+let partials = 0, finals = 0, submitted = 0, skippedTotal = 0;
+// Builder state, keyed by utterance: speaker + first word start time
+const builders = new Map();
+function keyFor(speaker, words) {
+  const st = words && words[0] && words[0].start_timestamp ? words[0].start_timestamp.relative : 0;
+  return speaker + '@' + Math.round(st * 2); // 0.5s bucket for the same span
+}
+function lcp(a, b) {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i].text === b[i].text &&
+         Math.abs((a[i].start_timestamp?.relative||0) - (b[i].start_timestamp?.relative||0)) < 0.01) i++;
+  return i;
+}
+function fmt(t) { return t == null ? '--.--' : t.toFixed(2) + 's'; }
+
+function renderLive(speaker, committed, tentative) {
+  liveWho.textContent = (speaker || 'SPEAKER').toUpperCase() + '  ';
+  liveCommitted.textContent = committed.map(w => w.text).join(' ');
+  liveTentative.textContent = (committed.length ? ' ' : '') + tentative.map(w => w.text).join(' ');
+}
+function renderCounters() {
+  countersEl.textContent = `partials: ${partials} · finals: ${finals} · submitted once: ${submitted} · re-arrived words skipped: ${skippedTotal}`;
+}
+function appendScript(speaker, words) {
+  const t0 = words[0]?.start_timestamp?.relative, t1 = words[words.length-1]?.end_timestamp?.relative;
+  const text = words.map(w => w.text).join(' ');
+  const div = document.createElement('div');
+  div.className = 'line';
+  div.innerHTML = `<span class="ts">[${fmt(t0)} → ${fmt(t1)}]</span> <span class="who">${(speaker||'').toUpperCase()}:</span> `;
+  div.appendChild(document.createTextNode(text));
+  scriptEl.appendChild(div);
+  while (scriptEl.children.length > 6) scriptEl.removeChild(scriptEl.firstChild);
+  return {t0, t1, text};
+}
+
+try {
+  const rt = new WebSocket('wss://meeting-data.bot.recall.ai/api/v1/transcript');
+  rt.onopen = () => { statusEl.textContent = 'listening — transcript stream connected'; };
+  rt.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    const tr = m.transcript || (m.data && m.data.transcript) || {};
+    const words = tr.words || [];
+    if (!words.length) return;
+    const speaker = (tr.participant && tr.participant.name) ||
+                    (m.participant && m.participant.name) ||
+                    (m.data && m.data.participant && m.data.participant.name) || 'Unknown';
+    const isFinal = tr.is_final !== false;
+    const uttId = tr.original_transcript_id || keyFor(speaker, words);
+    forward(isFinal ? 'final' : 'partial', {speaker, isFinal, uttId, words, recv: Date.now()});
+
+    let b = builders.get(uttId);
+    if (!b) { b = {prev: null, committed: [], done: false}; builders.set(uttId, b); }
+    if (b.done) return;
+
+    if (!isFinal) partials++; else finals++;
+    if (b.prev) {
+      const agree = lcp(b.prev, words);
+      skippedTotal += agree;
+      if (agree > b.committed.length) b.committed = words.slice(0, agree);
+    }
+    b.prev = words;
+    if (isFinal) {
+      b.done = true; submitted++;
+      const line = appendScript(speaker, words);
+      forward('scriptline', {speaker, words, ...line, recv: Date.now()});
+      renderLive(speaker, words, []);
+    } else {
+      renderLive(speaker, b.committed, words.slice(b.committed.length));
+    }
+    renderCounters();
+  };
+  rt.onerror = () => { statusEl.textContent = 'transcript stream error (am I inside the Recall bot?)'; };
+} catch(e) {
+  statusEl.textContent = 'not inside a Recall bot — local preview only';
+}
+</script>
+</body>
+</html>
