@@ -97,7 +97,7 @@ function appendScript(speaker, words, isLash) {
 }
 
 // ---- response rendering: word by word at speaking pace (~165 wpm => 360ms/word) ----
-const WORD_MS = 360, CHUNK = 12;
+const WORD_MS = 360, CHUNK = 20;
 const sayQueue = [];
 let rendering = false;
 function renderSay(msg) {
