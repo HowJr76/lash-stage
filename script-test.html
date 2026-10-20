@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>SCRIPT — Live Test</title>
+<title>SCRIPT — Live Test v2</title>
+<!-- v2: span-start grouping, one-place display, live field names -->
 <style>
   html,body{margin:0;height:100%;background:#0a1628;color:#eaf4ff;font-family:Arial,Helvetica,sans-serif;overflow:hidden}
   #head{padding:18px 26px 8px;border-bottom:4px solid #14b8a6}
@@ -61,20 +62,24 @@ const scriptEl = document.getElementById('script');
 let partials = 0, finals = 0, submitted = 0, skippedTotal = 0;
 // Builder state, keyed by utterance: speaker + first word start time
 const builders = new Map();
+const wStart = w => (w && (w.start_time ?? (w.start_timestamp && w.start_timestamp.relative))) || 0;
+const wEnd = w => (w && (w.end_time ?? (w.end_timestamp && w.end_timestamp.relative))) || 0;
+// Grouping (v2 fix): Recall's live stream gives EVERY partial a new utterance id,
+// so versions of one sentence are grouped by speaker + the first word's start
+// time, which is identical across all versions of the same stretch of speech.
 function keyFor(speaker, words) {
-  const st = words && words[0] && words[0].start_timestamp ? words[0].start_timestamp.relative : 0;
-  return speaker + '@' + Math.round(st * 2); // 0.5s bucket for the same span
+  return speaker + '@' + (words && words.length ? wStart(words[0]).toFixed(1) : '0.0');
 }
 function lcp(a, b) {
   let i = 0;
   while (i < a.length && i < b.length && a[i].text === b[i].text &&
-         Math.abs((a[i].start_timestamp?.relative||0) - (b[i].start_timestamp?.relative||0)) < 0.01) i++;
+         Math.abs(wStart(a[i]) - wStart(b[i])) < 0.05) i++;
   return i;
 }
 function fmt(t) { return t == null ? '--.--' : t.toFixed(2) + 's'; }
 
 function renderLive(speaker, committed, tentative) {
-  liveWho.textContent = (speaker || 'SPEAKER').toUpperCase() + '  ';
+  liveWho.textContent = speaker ? (speaker.toUpperCase() + '  ') : 'NOW  ';
   liveCommitted.textContent = committed.map(w => w.text).join(' ');
   liveTentative.textContent = (committed.length ? ' ' : '') + tentative.map(w => w.text).join(' ');
 }
@@ -82,7 +87,7 @@ function renderCounters() {
   countersEl.textContent = `partials: ${partials} · finals: ${finals} · submitted once: ${submitted} · re-arrived words skipped: ${skippedTotal}`;
 }
 function appendScript(speaker, words) {
-  const t0 = words[0]?.start_timestamp?.relative, t1 = words[words.length-1]?.end_timestamp?.relative;
+  const t0 = words.length ? wStart(words[0]) : null, t1 = words.length ? wEnd(words[words.length-1]) : null;
   const text = words.map(w => w.text).join(' ');
   const div = document.createElement('div');
   div.className = 'line';
@@ -123,7 +128,7 @@ try {
       b.done = true; submitted++;
       const line = appendScript(speaker, words);
       forward('scriptline', {speaker, words, ...line, recv: Date.now()});
-      renderLive(speaker, words, []);
+      renderLive('', [], []);
     } else {
       renderLive(speaker, b.committed, words.slice(b.committed.length));
     }
