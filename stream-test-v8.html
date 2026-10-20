@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LASH — Stream Test v8</title>
+<!-- v8 stream test (2026-10-20): wire = v7 PLUS voice. Same channel
+     script-test and same text events as v7 (hello/partial/final/
+     scriptline/dispatch/render_start/clause_shown/rendered/cutoff out,
+     clause/turn_end in) with two extensions:
+       IN  "audio": a synthesized fragment package for a clause (part):
+           {turn, idx, part, parts, text, clause_text, audio_b64 (mp3),
+            format, duration_ms, speech_onset_ms,
+            word_schedule:[{word, at_ms}...], emit_wall, synth_ms, trim_ms}
+       OUT "audio_start" {turn, idx, part, wall} when a fragment's
+           playback actually starts; "audio_end" likewise at its end.
+     Voice turn engine: a clause's text is BUFFERED on arrival and is
+     revealed ONLY as its audio plays — word reveal is driven by the
+     AUDIO CLOCK (fragment startCtx + word_schedule at_ms vs
+     AudioContext.currentTime), so in v8 revealed == sounded by
+     construction. Extended payloads: cutoff adds sounded_words /
+     sounded_text (and words_shown == sounded_words); rendered adds
+     sounded_words / sounded_text.
+     FALLBACK: if a clause's text has arrived but no audio package for
+     it within 3000ms, that clause's words are revealed plainly (as v7
+     did) and the rendered note carries '(text fallback)' — the tile
+     never dead-airs waiting for audio.
+     Presentation identical to v7 except title/status say v8. -->
+<style>
+  html,body{margin:0;height:100%;background:radial-gradient(1200px 700px at 50% -10%, #0d2c47 0%, #081c30 45%, #050f1c 100%);color:#e8eef2;font-family:Georgia,'Times New Roman',serif;overflow:hidden}
+  #wrap{height:100%;display:flex;flex-direction:column;align-items:center;padding:38px 78px 34px;box-sizing:border-box}
+  #head{width:100%;max-width:1120px;display:flex;justify-content:space-between;align-items:baseline;gap:24px;border-bottom:3px solid #17b6c9;padding-bottom:10px}
+  #title{font-size:27px;font-weight:700;letter-spacing:.05em;white-space:nowrap}
+  #title em{font-style:normal;color:#17b6c9}
+  #status{font-size:21px;font-weight:600;color:#b8c9d8;text-align:right;line-height:1.3}
+  #status.cut{color:#f5c15c;font-weight:700}
+  #live{width:100%;max-width:1120px;min-height:38px;padding:14px 0 2px;font-size:25px;line-height:1.4}
+  #live .who{color:#f5c15c;font-weight:bold;font-size:21px;letter-spacing:.08em}
+  .committed{color:#ffffff;font-weight:bold}
+  .tentative{color:#7d93ad;font-style:italic}
+  #response{width:100%;max-width:1060px;flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:6px 0}
+  #prompt{font-size:22px;color:#a9bfd2;font-style:italic;line-height:1.4;min-height:31px;max-width:1020px;margin-bottom:10px}
+  #say{font-size:58px;line-height:1.45;color:#eafafd;max-width:1040px;overflow:hidden}
+  #say .who{color:#17b6c9;font-weight:bold}
+  #say .cutmark{color:#f5c15c;font-size:42px;font-weight:bold}
+  #logwrap{width:100%;max-width:1120px;border-top:2px solid rgba(23,182,201,.35);padding-top:8px;opacity:.62}
+  #logtitle{font-size:13px;letter-spacing:.22em;color:#17b6c9;font-weight:700;margin-bottom:4px}
+  #script{font-size:19px;line-height:1.45}
+  #script .line{margin:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #script .ts{color:#f5c15c;font-weight:bold;font-size:16px}
+  #script .who{color:#f5c15c;font-weight:bold}
+  #script .who.lash{color:#17b6c9}
+  #counters{font-size:14px;color:#5f7d94;margin-top:4px}
+  @media (max-height:540px){
+    #wrap{padding:20px 40px}
+    #response{justify-content:flex-start}
+    #say{font-size:40px;flex:none}
+    #prompt{font-size:18px;min-height:26px}
+    #live{display:none}
+    #logwrap{display:none}
+    #title{font-size:22px}
+    #status{font-size:17px}
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="head">
+    <div id="title">LASH <em>· STREAM TEST v8</em></div>
+    <div id="status">connecting…</div>
+  </div>
+  <div id="live"><span class="who">NOW&nbsp;&nbsp;</span><span class="committed"></span><span class="tentative"></span></div>
+  <div id="response">
+    <div id="prompt"></div>
+    <div id="say"></div>
+  </div>
+  <div id="logwrap">
+    <div id="logtitle">SCRIPT — RESOLVED HISTORY ONLY</div>
+    <div id="script"></div>
+    <div id="counters">partials: 0 · finals: 0 · sent: 0 · skipped re-arrivals: 0</div>
+  </div>
+</div>
+
+<script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
+<script>
+const qs = new URLSearchParams(location.search);
+const ABLY_KEY = qs.get('live') || '';
+let ablyCh = null;
+if (ABLY_KEY && window.Ably) {
+  try { ablyCh = new Ably.Realtime(ABLY_KEY).channels.get('script-test'); } catch(e) {}
+}
+function forward(kind, payload) { if (ablyCh) { try { ablyCh.publish(kind, payload); } catch(e) {} } }
+
+const statusEl = document.getElementById('status');
+const countersEl = document.getElementById('counters');
+const liveWho = document.querySelector('#live .who');
+const liveCommitted = document.querySelector('#live .committed');
+const liveTentative = document.querySelector('#live .tentative');
+const promptEl = document.getElementById('prompt');
+const sayEl = document.getElementById('say');
+const scriptEl = document.getElementById('script');
+
+const wStart = w => (w && (w.start_time ?? (w.start_timestamp && w.start_timestamp.relative))) || 0;
+const wEnd = w => (w && (w.end_time ?? (w.end_timestamp && w.end_timestamp.relative))) || 0;
+function keyFor(speaker, words) { return speaker + '@' + (words && words.length ? wStart(words[0]).toFixed(1) : '0.0'); }
+function lcp(a, b) { let i = 0; while (i < a.length && i < b.length && a[i].text === b[i].text && Math.abs(wStart(a[i]) - wStart(b[i])) < 0.05) i++; return i; }
+const fmt = t => t == null ? '--.--' : t.toFixed(2) + 's';
+const fmtClock = wall => { const d = new Date(wall); return d.toTimeString().slice(0, 8); };
+
+let partials = 0, finals = 0, submitted = 0, skippedTotal = 0, seq = 0;
+let clausesSeen = 0, cutoffs = 0;
+const builders = new Map();
+function renderCounters() { countersEl.textContent = `partials: ${partials} · finals: ${finals} · sent: ${submitted} · skipped re-arrivals: ${skippedTotal} · clauses: ${clausesSeen} · cutoffs: ${cutoffs}`; }
+function renderLive(speaker, committed, tentative) {
+  liveWho.textContent = speaker ? speaker.toUpperCase() + '  ' : 'NOW  ';
+  liveCommitted.textContent = committed.map(w => w.text).join(' ');
+  liveTentative.textContent = (committed.length ? ' ' : '') + tentative.map(w => w.text).join(' ');
+}
+function pushScriptLine(tsText, speaker, text, isLash) {
+  const div = document.createElement('div'); div.className = 'line';
+  const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = tsText + ' ';
+  const who = document.createElement('span'); who.className = 'who' + (isLash ? ' lash' : ''); who.textContent = (speaker || '').toUpperCase() + ': ';
+  div.appendChild(ts); div.appendChild(who); div.appendChild(document.createTextNode(text));
+  scriptEl.appendChild(div);
+  while (scriptEl.children.length > 2) scriptEl.removeChild(scriptEl.firstChild);
+}
+function appendScript(speaker, words, isLash) {
+  const t0 = words.length ? wStart(words[0]) : null, t1 = words.length ? wEnd(words[words.length-1]) : null;
+  const text = words.map(w => w.text).join(' ');
+  pushScriptLine(`[${fmt(t0)} → ${fmt(t1)}]`, speaker, text, isLash);
+  return {t0, t1, text};
+}
+
+// ---- v8 voice turn engine: text buffered, revealed by the audio clock ----
+window.__v8log = [];
+function v8log(entry) { try { window.__v8log.push(entry); } catch(e) {} }
+
+let actx = null;
+function ensureCtx() {
+  if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) { actx = null; } }
+  if (actx && actx.state === 'suspended') { actx.resume().catch(() => {}); }
+  return actx;
+}
+
+let cur = null; // {turn, shown:[], sounded:[], started_wall, started, active, cut,
+                //  turnEnded, usedFallback, renderFired,
+                //  clauses:Map idx->clause, frags:[], lastEndCtx, pendingDecodes}
+const deadTurns = new Set();
+const SAY_SIZES = [58, 50, 44, 38, 33, 28, 24];
+function fitSay() {
+  const avail = sayEl.parentElement.clientHeight - promptEl.offsetHeight - 26;
+  let i = 0;
+  sayEl.style.fontSize = SAY_SIZES[0] + 'px';
+  while (i < SAY_SIZES.length - 1 && avail > 0 && sayEl.scrollHeight > avail) {
+    i++; sayEl.style.fontSize = SAY_SIZES[i] + 'px';
+  }
+}
+function newTurnState(turn) {
+  return { turn, shown: [], sounded: [], started_wall: 0, started: false,
+           active: true, cut: false, turnEnded: false, usedFallback: false,
+           renderFired: false, clauses: new Map(), frags: [],
+           lastEndCtx: 0, pendingDecodes: 0, said_text: '', said_wall: 0 };
+}
+// render_start + the prompt label fire on the turn's FIRST fragment start
+// (or on fallback reveal) — never on clause arrival: nothing is on the
+// tile until it is actually being said.
+function fireRenderStart() {
+  if (!cur || cur.renderFired) return;
+  cur.renderFired = true;
+  cur.started = true;
+  cur.started_wall = Date.now();
+  statusEl.classList.remove('cut');
+  sayEl.style.fontSize = SAY_SIZES[0] + 'px';
+  sayEl.innerHTML = '<span class="who">LASH&nbsp;&nbsp;</span>';
+  const late = cur.said_wall ? ((cur.started_wall - cur.said_wall) / 1000).toFixed(1) : '?';
+  promptEl.textContent = 'in reply to: "' + (cur.said_text || '') + '"' +
+    (cur.said_wall ? (' · said ' + fmtClock(cur.said_wall) + ' · +' + late + 's to first words') : '');
+  forward('render_start', { turn: cur.turn, in_reply_to: cur.turn, wall: cur.started_wall });
+}
+function finalizeTurn(note) {
+  if (!cur) return;
+  let n = note || '';
+  if (cur.usedFallback) n = (n ? n + ' ' : '') + '(text fallback)';
+  const text = cur.shown.join(' ');
+  pushScriptLine('[' + fmtClock(cur.started_wall || Date.now()) + ']', 'Lash', text + (n ? ' ' + n : ''), true);
+  forward('rendered', { turn: cur.turn, in_reply_to: cur.turn, words: cur.shown.length,
+                        sounded_words: cur.sounded.length, sounded_text: cur.sounded.join(' '),
+                        started_wall: cur.started_wall, ended_wall: Date.now(), note: n });
+  cur.active = false;
+  deadTurns.add(cur.turn);
+}
+function maybeFinalize() {
+  if (!cur || !cur.active || cur.cut || !cur.turnEnded) return;
+  if (cur.pendingDecodes > 0) return;
+  for (const frag of cur.frags) if (!frag.ended && !frag.cancelled) return;
+  for (const cl of cur.clauses.values()) if (!cl.audioReceived && !cl.fallbackDone) return; // fallback still owed
+  finalizeTurn('');
+}
+function haltAudio() {
+  if (!cur) return;
+  for (const frag of cur.frags) {
+    frag.cancelled = true;
+    if (frag.startTimer) { clearTimeout(frag.startTimer); frag.startTimer = null; }
+    if (frag.source) { try { frag.source.onended = null; frag.source.stop(); } catch(e) {} try { frag.source.disconnect(); } catch(e) {} }
+  }
+}
+function getClause(turnState, msg) {
+  let cl = turnState.clauses.get(msg.idx);
+  if (!cl) {
+    cl = { idx: msg.idx, text: '', words: [], audioReceived: false,
+           fallbackDone: false, shownFired: false, fallbackTimer: null };
+    turnState.clauses.set(msg.idx, cl);
+  }
+  return cl;
+}
+function revealWord(frag, word, viaAudio) {
+  sayEl.appendChild(document.createTextNode(' ' + word));
+  cur.shown.push(word);
+  if (viaAudio) cur.sounded.push(word);
+  v8log({ ev: 'word', turn: cur.turn, idx: frag ? frag.idx : -1, part: frag ? frag.part : -1,
+          word, ctx: actx ? actx.currentTime : 0, wall: Date.now(),
+          schedCtx: frag ? frag.startCtx + (frag.wordAtMs[frag.revealed] || 0) / 1000 : 0 });
+  if (frag) frag.revealed++;
+  fitSay();
+  // clause_shown fires when a clause's FIRST word is revealed
+  const idx = frag ? frag.idx : -1;
+  const cl = cur.clauses.get(idx);
+  if (cl && !cl.shownFired) {
+    cl.shownFired = true;
+    forward('clause_shown', { turn: cur.turn, idx, words_total: cur.shown.length, wall: Date.now() });
+  }
+}
+// ---- fallback: clause text with no audio within 3000ms reveals plainly ----
+function armFallback(cl) {
+  if (cl.fallbackTimer || cl.audioReceived || cl.fallbackDone) return;
+  cl.fallbackTimer = setTimeout(() => {
+    cl.fallbackTimer = null;
+    if (!cur || !cur.active || cur.cut || cl.audioReceived || cl.fallbackDone) return;
+    cl.fallbackDone = true;
+    cur.usedFallback = true;
+    v8log({ ev: 'fallback', turn: cur.turn, idx: cl.idx, part: 0, ctx: actx ? actx.currentTime : 0, wall: Date.now() });
+    fireRenderStart();
+    const pseudo = { idx: cl.idx, part: 0, startCtx: actx ? actx.currentTime : 0, wordAtMs: cl.words.map(() => 0), revealed: 0 };
+    for (const w of cl.words) {
+      sayEl.appendChild(document.createTextNode(' ' + w));
+      cur.shown.push(w);
+      v8log({ ev: 'word', turn: cur.turn, idx: cl.idx, part: 0, word: w, ctx: actx ? actx.currentTime : 0, wall: Date.now(), via: 'fallback' });
+      fitSay();
+      if (!cl.shownFired) { cl.shownFired = true; forward('clause_shown', { turn: cur.turn, idx: cl.idx, words_total: cur.shown.length, wall: Date.now() }); }
+    }
+    maybeFinalize();
+  }, 3000);
+}
+function onClause(msg) {
+  if (deadTurns.has(msg.turn)) return; // cut/finalized turn: remainder never renders
+  if (cur && cur.cut && cur.turn === msg.turn) return;
+  if (!cur || cur.turn !== msg.turn || !cur.active) {
+    if (cur && cur.active) { haltAudio(); finalizeTurn('(superseded)'); }
+    cur = newTurnState(msg.turn);
+  }
+  if (msg.said_text && !cur.said_text) cur.said_text = msg.said_text;
+  if (msg.said_wall && !cur.said_wall) cur.said_wall = msg.said_wall;
+  const cl = getClause(cur, msg);
+  if (!cl.text) {
+    cl.text = String(msg.text || '');
+    cl.words = cl.text.split(/\s+/).filter(Boolean);
+    clausesSeen++; renderCounters();
+  }
+  armFallback(cl); // audio may still beat the timer; it cancels on arrival
+}
+// ---- audio clock reveal loop: reveals every word whose time has come ----
+function revealDueWords() {
+  if (!cur || !cur.active || cur.cut || !actx) return;
+  const now = actx.currentTime;
+  for (const frag of cur.frags) {
+    if (frag.cancelled || !frag.started) continue;
+    while (frag.revealed < frag.words.length &&
+           frag.startCtx + (frag.wordAtMs[frag.revealed] || 0) / 1000 <= now) {
+      revealWord(frag, frag.words[frag.revealed], true);
+    }
+  }
+}
+setInterval(() => {
+  // backup audio_start detection (the per-fragment timer is primary)
+  if (cur && cur.active && !cur.cut && actx) {
+    for (const frag of cur.frags) {
+      if (!frag.started && !frag.cancelled && frag.startCtx <= actx.currentTime) fragFireStart(frag);
+    }
+  }
+  revealDueWords();
+}, 10);
+function fragFireStart(frag) {
+  if (frag.started || frag.cancelled || !cur || cur.cut) return;
+  frag.started = true;
+  const wall = Date.now();
+  v8log({ ev: 'frag_start', turn: frag.turn, idx: frag.idx, part: frag.part,
+          ctx: frag.startCtx, startCtx: frag.startCtx, wall });
+  fireRenderStart();
+  forward('audio_start', { turn: frag.turn, idx: frag.idx, part: frag.part, wall });
+}
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+async function onAudio(msg) {
+  if (deadTurns.has(msg.turn)) return; // cut/finalized turn: ignored
+  if (cur && cur.cut && cur.turn === msg.turn) return;
+  if (!cur || cur.turn !== msg.turn || !cur.active) {
+    if (cur && cur.active) { haltAudio(); finalizeTurn('(superseded)'); }
+    cur = newTurnState(msg.turn);
+  }
+  const turnState = cur;
+  const cl = getClause(turnState, msg);
+  if (msg.clause_text && !cl.text) { cl.text = String(msg.clause_text); cl.words = cl.text.split(/\s+/).filter(Boolean); }
+  cl.audioReceived = true;
+  if (cl.fallbackTimer) { clearTimeout(cl.fallbackTimer); cl.fallbackTimer = null; }
+  if (cl.fallbackDone) return; // text already shown plainly; never double-render
+  const ctx = ensureCtx();
+  if (!ctx) return;
+  // decode+scheduling is SERIALIZED per turn in arrival order: concurrent
+  // decodeAudioData completions can land out of order, and fragments must
+  // play in (idx, part) order — never in decode-completion order.
+  turnState.pendingDecodes++;
+  turnState.chain = (turnState.chain || Promise.resolve()).then(async () => {
+    let buffer;
+    try { buffer = await ctx.decodeAudioData(b64ToBytes(String(msg.audio_b64 || '')).buffer); }
+    catch(e) { turnState.pendingDecodes--; maybeFinalize(); return; }
+    turnState.pendingDecodes--;
+    if (cur !== turnState || !turnState.active || turnState.cut || deadTurns.has(msg.turn)) { maybeFinalize(); return; }
+    scheduleFragment(turnState, msg, buffer, ctx);
+    maybeFinalize();
+  }).catch(() => {});
+}
+function scheduleFragment(turnState, msg, buffer, ctx) {
+  const sched = Array.isArray(msg.word_schedule) ? msg.word_schedule : [];
+  const words = sched.length ? sched.map(s => String(s.word)) : String(msg.text || '').split(/\s+/).filter(Boolean);
+  const wordAtMs = words.map((w, i) => (sched[i] && typeof sched[i].at_ms === 'number') ? sched[i].at_ms : 0);
+  // gapless per turn: start at the previous fragment's end, never in the past
+  const startCtx = Math.max(ctx.currentTime + 0.03, turnState.lastEndCtx || 0);
+  const duration_s = buffer.duration;
+  turnState.lastEndCtx = startCtx + duration_s;
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(ctx.destination);
+  const frag = { turn: msg.turn, idx: msg.idx, part: msg.part || 0, startCtx,
+                 duration_s, word_schedule: sched, wordAtMs, words, revealed: 0,
+                 started: false, ended: false, cancelled: false, source, startTimer: null };
+  turnState.frags.push(frag);
+  turnState.frags.sort((a, b) => a.startCtx - b.startCtx);
+  source.onended = () => {
+    if (frag.cancelled || (cur && cur.cut)) return;
+    frag.ended = true;
+    const wall = Date.now();
+    v8log({ ev: 'frag_end', turn: frag.turn, idx: frag.idx, part: frag.part,
+            ctx: frag.startCtx + frag.duration_s, startCtx: frag.startCtx,
+            endCtx: frag.startCtx + frag.duration_s, wall });
+    forward('audio_end', { turn: frag.turn, idx: frag.idx, part: frag.part, wall });
+    maybeFinalize();
+  };
+  try { source.start(startCtx); } catch(e) { frag.ended = true; return; }
+  const delayMs = Math.max(0, (startCtx - ctx.currentTime) * 1000);
+  frag.startTimer = setTimeout(() => fragFireStart(frag), delayMs);
+}
+function onTurnEnd(msg) {
+  if (deadTurns.has(msg.turn)) return;
+  if (cur && cur.turn === msg.turn && cur.active && !cur.cut) {
+    cur.turnEnded = true;
+    maybeFinalize(); // finalizes now if all audio is done; otherwise at last frag_end / fallback
+  }
+}
+function fireCutoff() {
+  if (!cur || !cur.active || cur.cut) return;
+  revealDueWords(); // sounded = exactly the words whose scheduled time has passed
+  cur.cut = true; cutoffs++; renderCounters();
+  const haltCtx = actx ? actx.currentTime : 0;
+  haltAudio(); // stop() live sources, cancel not-yet-started fragments
+  for (const cl of cur.clauses.values()) if (cl.fallbackTimer) { clearTimeout(cl.fallbackTimer); cl.fallbackTimer = null; }
+  const sounded_text = cur.sounded.join(' ');
+  cur.shown = cur.sounded.slice(); // revealed == sounded by construction in v8
+  v8log({ ev: 'cutoff', turn: cur.turn, idx: -1, part: -1, ctx: haltCtx, wall: Date.now(), sounded_words: cur.sounded.length });
+  sayEl.appendChild(Object.assign(document.createElement('span'), { className: 'cutmark', textContent: ' —✂' }));
+  forward('cutoff', { turn: cur.turn, words_shown: cur.sounded.length, sounded_words: cur.sounded.length,
+                      sounded_text, wall: Date.now() });
+  finalizeTurn('— cut off at word ' + cur.sounded.length);
+  statusEl.textContent = 'cut off at word ' + cur.sounded.length + ' — the rest never existed';
+  statusEl.classList.add('cut');
+}
+if (ablyCh) {
+  ablyCh.subscribe('clause', m => { try { onClause(typeof m.data === 'string' ? JSON.parse(m.data) : m.data); } catch(e) {} });
+  ablyCh.subscribe('audio', m => { try { onAudio(typeof m.data === 'string' ? JSON.parse(m.data) : m.data); } catch(e) {} });
+  ablyCh.subscribe('turn_end', m => { try { onTurnEnd(typeof m.data === 'string' ? JSON.parse(m.data) : m.data); } catch(e) {} });
+}
+
+// ---- transcript intake (same proven path as v2/v3) ----
+try {
+  const rt = new WebSocket('wss://meeting-data.bot.recall.ai/api/v1/transcript');
+  rt.onopen = () => { statusEl.textContent = 'listening — v8: my words play as sound and appear as I say them; speak over me to cut me off'; forward('hello', {ts: Date.now(), page: 'stream-test-v8'}); };
+  rt.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    const tr = m.transcript || (m.data && m.data.transcript) || {};
+    const words = tr.words || [];
+    if (!words.length) return;
+    const speaker = (tr.participant && tr.participant.name) || (m.participant && m.participant.name) || (m.data && m.data.participant && m.data.participant.name) || 'Unknown';
+    const isFinal = tr.is_final !== false;
+    const uttId = keyFor(speaker, words);
+    // CUTOFF: first partial of a NEW human utterance while a reply is streaming
+    if (!isFinal && !builders.has(uttId)) fireCutoff();
+    forward(isFinal ? 'final' : 'partial', {speaker, isFinal, uttId, words, recv: Date.now()});
+    let b = builders.get(uttId);
+    if (!b) { b = {prev: null, committed: [], done: false}; builders.set(uttId, b); }
+    if (b.done) return;
+    if (!isFinal) partials++; else finals++;
+    if (b.prev) {
+      const agree = lcp(b.prev, words);
+      skippedTotal += agree;
+      if (agree > b.committed.length) b.committed = words.slice(0, agree);
+    }
+    b.prev = words;
+    if (isFinal) {
+      b.done = true; submitted++; seq++;
+      const line = appendScript(speaker, words, false);
+      forward('scriptline', {speaker, words, ...line, recv: Date.now()});
+      forward('dispatch', {seq, speaker, text: line.text, t0: line.t0, t1: line.t1, wall: Date.now()});
+      renderLive('', [], []);
+    } else {
+      renderLive(speaker, b.committed, words.slice(b.committed.length));
+    }
+    renderCounters();
+  };
+  rt.onerror = () => { statusEl.textContent = 'transcript stream error (am I inside the Recall bot?)'; };
+} catch(e) { statusEl.textContent = 'not inside a Recall bot — local preview only'; }
+</script>
+</body>
+</html>
