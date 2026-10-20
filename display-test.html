@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LASH — Response Display Test</title>
+<!-- v3 display test: stage-grade layout (1280x720, navy/teal system from stage.html).
+     Howard's lines build in ONE live line (gray tentative -> white committed) and,
+     on final, move into the script log at the bottom. Lash's responses arrive as
+     'say' events and render WORD BY WORD at speaking pace in the response zone.
+     Caption rule honored: only text actually being rendered is ever on screen. -->
+<style>
+  html,body{margin:0;height:100%;background:radial-gradient(1200px 700px at 50% -10%, #0d2c47 0%, #081c30 45%, #050f1c 100%);color:#e8eef2;font-family:Georgia,'Times New Roman',serif;overflow:hidden}
+  #wrap{height:100%;display:flex;flex-direction:column;align-items:center;padding:22px 40px;box-sizing:border-box}
+  #head{width:100%;max-width:1180px;display:flex;justify-content:space-between;align-items:baseline;border-bottom:3px solid #17b6c9;padding-bottom:10px}
+  #title{font-size:30px;font-weight:700;letter-spacing:.04em}
+  #title em{font-style:normal;color:#17b6c9}
+  #status{font-size:17px;color:#9fb2c1}
+  #live{width:100%;max-width:1180px;min-height:96px;padding:16px 0 4px;font-size:30px;line-height:1.4}
+  #live .who{color:#f5c15c;font-weight:bold;font-size:22px;letter-spacing:.08em}
+  .committed{color:#ffffff;font-weight:bold}
+  .tentative{color:#7d93ad;font-style:italic}
+  #response{width:100%;max-width:1180px;flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:8px 0}
+  #prompt{font-size:21px;color:#7f95a7;font-style:italic;min-height:28px;max-width:1000px}
+  #say{font-size:44px;line-height:1.5;color:#d7f3f7;min-height:132px;max-width:1080px}
+  #say .who{color:#17b6c9;font-weight:bold}
+  #logwrap{width:100%;max-width:1180px;border-top:2px solid rgba(23,182,201,.45);padding-top:10px}
+  #logtitle{font-size:15px;letter-spacing:.22em;color:#17b6c9;font-weight:700;margin-bottom:6px}
+  #script{font-size:24px;line-height:1.5}
+  #script .line{margin:5px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #script .ts{color:#f5c15c;font-weight:bold;font-size:20px}
+  #script .who{color:#f5c15c;font-weight:bold}
+  #script .who.lash{color:#17b6c9}
+  #counters{font-size:16px;color:#5f7d94;margin-top:6px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="head">
+    <div id="title">LASH <em>· RESPONSE DISPLAY TEST</em></div>
+    <div id="status">connecting…</div>
+  </div>
+  <div id="live"><span class="who">NOW&nbsp;&nbsp;</span><span class="committed"></span><span class="tentative"></span></div>
+  <div id="response">
+    <div id="prompt"></div>
+    <div id="say"></div>
+  </div>
+  <div id="logwrap">
+    <div id="logtitle">SCRIPT — FINISHED LINES</div>
+    <div id="script"></div>
+    <div id="counters">partials: 0 · finals: 0 · sent: 0 · skipped re-arrivals: 0</div>
+  </div>
+</div>
+
+<script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
+<script>
+const qs = new URLSearchParams(location.search);
+const ABLY_KEY = qs.get('live') || '';
+let ablyCh = null;
+if (ABLY_KEY && window.Ably) {
+  try { ablyCh = new Ably.Realtime(ABLY_KEY).channels.get('script-test'); } catch(e) {}
+}
+function forward(kind, payload) { if (ablyCh) { try { ablyCh.publish(kind, payload); } catch(e) {} } }
+
+const statusEl = document.getElementById('status');
+const countersEl = document.getElementById('counters');
+const liveWho = document.querySelector('#live .who');
+const liveCommitted = document.querySelector('#live .committed');
+const liveTentative = document.querySelector('#live .tentative');
+const promptEl = document.getElementById('prompt');
+const sayEl = document.getElementById('say');
+const scriptEl = document.getElementById('script');
+
+const wStart = w => (w && (w.start_time ?? (w.start_timestamp && w.start_timestamp.relative))) || 0;
+const wEnd = w => (w && (w.end_time ?? (w.end_timestamp && w.end_timestamp.relative))) || 0;
+function keyFor(speaker, words) { return speaker + '@' + (words && words.length ? wStart(words[0]).toFixed(1) : '0.0'); }
+function lcp(a, b) { let i = 0; while (i < a.length && i < b.length && a[i].text === b[i].text && Math.abs(wStart(a[i]) - wStart(b[i])) < 0.05) i++; return i; }
+const fmt = t => t == null ? '--.--' : t.toFixed(2) + 's';
+
+let partials = 0, finals = 0, submitted = 0, skippedTotal = 0, seq = 0;
+const builders = new Map();
+function renderCounters() { countersEl.textContent = `partials: ${partials} · finals: ${finals} · sent: ${submitted} · skipped re-arrivals: ${skippedTotal}`; }
+function renderLive(speaker, committed, tentative) {
+  liveWho.textContent = speaker ? speaker.toUpperCase() + '  ' : 'NOW  ';
+  liveCommitted.textContent = committed.map(w => w.text).join(' ');
+  liveTentative.textContent = (committed.length ? ' ' : '') + tentative.map(w => w.text).join(' ');
+}
+function appendScript(speaker, words, isLash) {
+  const t0 = words.length ? wStart(words[0]) : null, t1 = words.length ? wEnd(words[words.length-1]) : null;
+  const text = words.map(w => w.text).join(' ');
+  const div = document.createElement('div'); div.className = 'line';
+  const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = `[${fmt(t0)} → ${fmt(t1)}] `;
+  const who = document.createElement('span'); who.className = 'who' + (isLash ? ' lash' : ''); who.textContent = (speaker || '').toUpperCase() + ': ';
+  div.appendChild(ts); div.appendChild(who); div.appendChild(document.createTextNode(text));
+  scriptEl.appendChild(div);
+  while (scriptEl.children.length > 5) scriptEl.removeChild(scriptEl.firstChild);
+  return {t0, t1, text};
+}
+
+// ---- response rendering: word by word at speaking pace (~165 wpm => 360ms/word) ----
+const WORD_MS = 360, CHUNK = 12;
+const sayQueue = [];
+let rendering = false;
+function renderSay(msg) {
+  sayQueue.push(msg);
+  if (!rendering) nextSay();
+}
+function nextSay() {
+  const msg = sayQueue.shift();
+  if (!msg) { rendering = false; return; }
+  rendering = true;
+  const words = String(msg.text || '').split(/\s+/).filter(Boolean);
+  promptEl.textContent = msg.in_reply_text ? ('in reply to: "' + msg.in_reply_text + '"') : '';
+  sayEl.innerHTML = '<span class="who">LASH&nbsp;&nbsp;</span>';
+  const started = Date.now();
+  let i = 0;
+  forward('render_start', {in_reply_to: msg.in_reply_to, words: words.length, wall: started});
+  const timer = setInterval(() => {
+    if (i > 0 && i % CHUNK === 0) sayEl.innerHTML = '<span class="who">LASH&nbsp;&nbsp;</span>';
+    if (i >= words.length) {
+      clearInterval(timer);
+      const ended = Date.now();
+      forward('rendered', {in_reply_to: msg.in_reply_to, words: words.length, started_wall: started, ended_wall: ended});
+      appendScript('Lash', words.map((t, k) => ({text: t, start_time: (started - started)/1000 + k * WORD_MS/1000, end_time: k * WORD_MS/1000 + WORD_MS/1000})), true);
+      setTimeout(nextSay, 500);
+      return;
+    }
+    sayEl.appendChild(document.createTextNode((i % CHUNK === 0 ? '' : ' ') + words[i]));
+    i++;
+  }, WORD_MS);
+}
+if (ablyCh) ablyCh.subscribe('say', m => { try { renderSay(typeof m.data === 'string' ? JSON.parse(m.data) : m.data); } catch(e) {} });
+
+// ---- transcript intake (same proven path as v2) ----
+try {
+  const rt = new WebSocket('wss://meeting-data.bot.recall.ai/api/v1/transcript');
+  rt.onopen = () => { statusEl.textContent = 'listening — say something, watch me answer here'; forward('hello', {ts: Date.now(), page: 'display-test-v3'}); };
+  rt.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    const tr = m.transcript || (m.data && m.data.transcript) || {};
+    const words = tr.words || [];
+    if (!words.length) return;
+    const speaker = (tr.participant && tr.participant.name) || (m.participant && m.participant.name) || (m.data && m.data.participant && m.data.participant.name) || 'Unknown';
+    const isFinal = tr.is_final !== false;
+    const uttId = keyFor(speaker, words);
+    forward(isFinal ? 'final' : 'partial', {speaker, isFinal, uttId, words, recv: Date.now()});
+    let b = builders.get(uttId);
+    if (!b) { b = {prev: null, committed: [], done: false}; builders.set(uttId, b); }
+    if (b.done) return;
+    if (!isFinal) partials++; else finals++;
+    if (b.prev) {
+      const agree = lcp(b.prev, words);
+      skippedTotal += agree;
+      if (agree > b.committed.length) b.committed = words.slice(0, agree);
+    }
+    b.prev = words;
+    if (isFinal) {
+      b.done = true; submitted++; seq++;
+      const line = appendScript(speaker, words, false);
+      forward('scriptline', {speaker, words, ...line, recv: Date.now()});
+      forward('dispatch', {seq, speaker, text: line.text, t0: line.t0, t1: line.t1, wall: Date.now()});
+      renderLive('', [], []);
+    } else {
+      renderLive(speaker, b.committed, words.slice(b.committed.length));
+    }
+    renderCounters();
+  };
+  rt.onerror = () => { statusEl.textContent = 'transcript stream error (am I inside the Recall bot?)'; };
+} catch(e) { statusEl.textContent = 'not inside a Recall bot — local preview only'; }
+</script>
+</body>
+</html>
