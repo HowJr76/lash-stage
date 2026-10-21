@@ -1710,17 +1710,31 @@ try {
       } catch (e) { /* probe is best-effort */ }
     }
     if (playing) {
-      stopPlayback();
+      // COLLISION DESIGN (2026-10-20, Howard): transcript
+      // activity NEVER stops playback in-page anymore.
+      // Words arriving while this stage plays are reported
+      // upstream as detection input only (speaking_started
+      // now carries the fragment + speaker, so the bridge's
+      // collision detector can hand the brain the words and
+      // the brain — not this page — decides whether the
+      // line stops). Playback stops only on COMMAND: a
+      // down-channel 'flush' (a brain yield, a leave) or
+      // session end. The pre-2026-10-20 behaviour
+      // (stopPlayback() on any words, any speaker — the
+      // bot's own echo included) was run 11's clipping.
       const now = Date.now();
       if (now - lastBargeAt > 2000) {
         lastBargeAt = now;
         if (liveMode && upCh)
           upCh.publish('control', {type:'speaking_started',
-                                   detail: currentText, ts: now});
+                                   detail: currentText, ts: now,
+                                   frag: text, speaker});
         else if (ghMode) ghPutJSON(`${SESS}/c/${now}-barge.json`,
-                              {type:'speaking_started', detail: currentText, ts: now});
+                              {type:'speaking_started', detail: currentText, ts: now,
+                               frag: text, speaker});
         else if (relay.readyState === 1)
-          relay.send(JSON.stringify({type:'speaking_started', during_text: currentText}));
+          relay.send(JSON.stringify({type:'speaking_started', during_text: currentText,
+                                     frag: text, speaker}));
       }
     }
     const isFinal = tr.is_final !== false;
