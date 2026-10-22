@@ -64,6 +64,12 @@
 <script>
 const qs = new URLSearchParams(location.search);
 const token = qs.get('t') || '';
+// Barge cut switch (Howard directive 2026-10-22, fork run 2): with
+// &barge=0 the transcript stream still reports utterances, but words
+// arriving while Lash is playing NEVER stop his playback in-page and
+// never raise speaking_started — the cut kept firing on his own
+// returning voice. Absent (or any other value) = incumbent behavior.
+const bargeOff = qs.get('barge') === '0';
 const face = document.getElementById('face');
 const statusEl = document.getElementById('status');
 const captionEl = document.getElementById('caption');
@@ -1017,7 +1023,7 @@ try {
                  m.data.data.participant.name) || 'Howard';
     const text = words.map(w => w.text).join(' ').trim();
     if (!text) return;
-    if (playing) {
+    if (playing && !bargeOff) {
       stopPlayback();
       const now = Date.now();
       if (now - lastBargeAt > 2000) {
